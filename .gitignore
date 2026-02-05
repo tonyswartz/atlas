@@ -1,0 +1,35 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+credentials.json
+token.json
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+
+# Local/temporary
+.tmp/
+*.log
+logs/*.log
+memory/logs/*.log
+
+# Data and state (local dbs and runtime state)
+data/*.db
+data/*.json
+!data/.gitkeep
+
+# IDE
+.idea/
+*.swp
+*.swo
+.DS_Store
+

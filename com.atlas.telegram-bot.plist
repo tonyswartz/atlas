@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.atlas.telegram-bot</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>tools/telegram/bot.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/printer/atlas</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>/Users/printer/Library/Python/3.14/lib/python/site-packages</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/printer/Library/Logs/telegram-bot.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/printer/Library/Logs/telegram-bot.err.log</string>
+</dict>
+</plist>

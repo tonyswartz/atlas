@@ -1,0 +1,38 @@
+model:
+  name: qwen2.5:7b
+  max_tokens: 4096
+  temperature: 0.7
+
+# Optional overrides for tool paths (absolute, or relative to repo root).
+# Omit or set to null to use built-in defaults.
+paths:
+  journal_csv: null
+  kanban: null
+  reminders: null
+
+memory:
+  load_on_start: true
+  load_db_entries: true
+  log_days: 2
+  db_hours: 24
+  min_importance: 3
+  auto_save_insights: true
+
+search:
+  # keyword_only is the safe default — no OPENAI_API_KEY required.
+  # Change to "hybrid" or "semantic" only if OPENAI_API_KEY is set in .env
+  default_method: keyword_only
+  limit: 5
+
+goals:
+  expose_goal_reading: true
+
+fallback:
+  enabled: true
+  model: MiniMax-M2.1
+  base_url: https://api.minimax.io/v1
+
+bot:
+  # Empty list = no access control; anyone can use the bot. See docs/SECURITY.md.
+  allowed_user_ids: []
+  typing_indicator: true
