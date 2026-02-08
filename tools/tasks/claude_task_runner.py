@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Claude CLI task runner.
 
-Reads [project] tasks from ClawdBot Kanban.md, runs them via ``claude -p``,
+Reads [project] tasks from Atlas Tasks.md, runs them via ``claude -p``,
 shows the diff, and waits for ``[approved]`` before committing.
 
 Quota-aware: if Claude hits a rate-limit, persists a "waiting" state and
@@ -45,7 +45,7 @@ import yaml  # PyYAML
 # ---------------------------------------------------------------------------
 REPO_ROOT     = Path(__file__).resolve().parent.parent.parent
 KANBAN_PATH   = Path(
-    "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/ClawdBot Kanban.md"
+    "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Atlas Tasks.md"
 )
 STATE_PATH    = REPO_ROOT / "data" / "claude_task_state.json"
 LOG_PATH      = REPO_ROOT / "logs" / "claude_task_runner.log"
