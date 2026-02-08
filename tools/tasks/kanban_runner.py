@@ -40,6 +40,10 @@ LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 TELEGRAM_TARGET = "8241581699"  # Tony
 
+# [project] tasks (2+ char name starting with a letter) are owned by
+# claude_task_runner.py — this runner skips them entirely.
+_CLAUDE_TASK_RE = re.compile(r"^\[([a-zA-Z]\w+)\]\s+")
+
 REQUIRED_MODELS = [
     'llama3.2:3b',
     'qwen2.5:7b',
@@ -321,6 +325,10 @@ def main() -> int:
 
     todo = buckets.get("todo", [])
     inprog = buckets.get("in_progress", [])
+
+    # [project] tasks are handled by claude_task_runner; ignore them here.
+    inprog = [t for t in inprog if not _CLAUDE_TASK_RE.match(t)]
+    todo   = [t for t in todo   if not _CLAUDE_TASK_RE.match(t)]
 
     # If something is already in progress, try to execute it (if it has steps + is approved).
     if inprog:

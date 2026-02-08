@@ -122,8 +122,9 @@ def get_calendar() -> list:
             capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
-            return []
-        
+            err = (result.stderr or "").strip() or f"gog exited {result.returncode}"
+            return [f"Calendar error: {err}"]
+
         data = json.loads(result.stdout) if result.stdout.strip() else {}
         events = data.get("events", []) if isinstance(data, dict) else data
         today = datetime.now(TZ).date()
@@ -505,6 +506,7 @@ def _md_to_html(text: str) -> str:
         line = html_mod.escape(line)
         line = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", line)
         line = re.sub(r"(?<!\*)\*(.+?)\*(?!\*)", r"<i>\1</i>", line)
+        line = re.sub(r"_(.+?)_", r"<i>\1</i>", line)  # Also handle underscore italics
         out.append(line)
     result = "\n".join(out)
 
@@ -523,7 +525,8 @@ def send_telegram(text: str) -> bool:
     load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = "8241581699"
+    # Send to Daily group
+    chat_id = "-5254628791"
     if not token:
         return False
 

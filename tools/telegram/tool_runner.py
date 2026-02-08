@@ -144,6 +144,16 @@ def execute(tool_name: str, tool_input: dict) -> str:
             return _browser(tool_input)
         elif tool_name == "web_search":
             return _web_search(tool_input)
+        elif tool_name == "system_config":
+            return _system_config(tool_input)
+        elif tool_name == "telegram_groups":
+            return _telegram_groups(tool_input)
+        elif tool_name == "conversation_context":
+            return _conversation_context(tool_input)
+        elif tool_name == "proactive_intelligence":
+            return _proactive_intelligence(tool_input)
+        elif tool_name == "log_correction":
+            return _log_correction(tool_input)
         elif tool_name in _ZAPIER_TOOLS:
             return _zapier(tool_name, tool_input)
         else:
@@ -288,37 +298,69 @@ def _read_goal(inp: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Kanban (read-only; tasks live in clawd)
+# Kanban  (ClawdBot Kanban.md — single source of truth)
 # ---------------------------------------------------------------------------
 
-_DEFAULT_KANBAN_PATH = Path("/Users/printer/clawd/kanban/tasks.json")
+_CLAWDBOT_KANBAN = Path(
+    "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/ClawdBot Kanban.md"
+)
+
+_KAN_HEADER_MAP = {
+    "[to-do]": "todo",
+    "[in progress]": "in_progress",
+    "[backlog]": "backlog",
+    "[done]": "completed",
+}
+
+
+def _parse_kanban_md() -> dict[str, list[str]]:
+    """Parse ClawdBot Kanban.md into {todo, in_progress, backlog, completed}."""
+    buckets: dict[str, list[str]] = {
+        "todo": [], "in_progress": [], "backlog": [], "completed": []
+    }
+    if not _CLAWDBOT_KANBAN.exists():
+        return buckets
+    current: str | None = None
+    for raw in _CLAWDBOT_KANBAN.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        key = _KAN_HEADER_MAP.get(line.lower())
+        if key:
+            current = key
+            continue
+        if current and line.startswith("-"):
+            title = line[1:].strip()
+            if title:
+                buckets[current].append(title)
+    return buckets
+
+
+def _write_kanban_md(buckets: dict[str, list[str]]) -> None:
+    """Write buckets back to ClawdBot Kanban.md in standard format."""
+    def section(header: str, items: list[str]) -> str:
+        lines = [header]
+        lines += [f"- {t}" for t in items] if items else ["- "]
+        return "\n".join(lines)
+
+    content = "\n\n".join([
+        section("[To-Do]",       buckets.get("todo", [])),
+        section("[In Progress]", buckets.get("in_progress", [])),
+        section("[Backlog]",     buckets.get("backlog", [])),
+        section("[Done]",        buckets.get("completed", [])),
+    ]) + "\n"
+    _CLAWDBOT_KANBAN.write_text(content, encoding="utf-8")
 
 
 def _kanban_read() -> str:
-    """Read To-Do, In Progress, Backlog from tasks.json. Read-only."""
-    path = _resolve_path("kanban", _DEFAULT_KANBAN_PATH)
-    if not path.exists():
-        return json.dumps({"success": True, "message": "No Kanban file found.", "todo": [], "in_progress": [], "backlog": []})
-
-    try:
-        raw = path.read_text(encoding="utf-8")
-        obj = json.loads(raw)
-        tasks = obj["tasks"] if isinstance(obj, dict) and "tasks" in obj else (obj if isinstance(obj, list) else [])
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning("kanban_read failed: %s", e)
-        return json.dumps({"success": False, "error": USER_FACING_ERROR})
-
-    def bucket(status: str) -> list[str]:
-        s = status.lower()
-        return [t.get("title") or t.get("id") or "Untitled" for t in tasks if (t.get("status") or "").lower() == s]
-
-    out = {
+    """Read To-Do, In Progress, Backlog from ClawdBot Kanban.md."""
+    buckets = _parse_kanban_md()
+    return json.dumps({
         "success": True,
-        "todo": bucket("todo"),
-        "in_progress": bucket("in_progress"),
-        "backlog": bucket("backlog"),
-    }
-    return json.dumps(out, indent=2)
+        "todo":        buckets["todo"],
+        "in_progress": buckets["in_progress"],
+        "backlog":     buckets["backlog"],
+    }, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -698,58 +740,57 @@ def _reminder_add(inp: dict) -> str:
 
 
 def _kanban_write(inp: dict) -> str:
-    """Add or move a task in tasks.json. Read-modify-write with atomic swap."""
+    """Add or move a task in ClawdBot Kanban.md."""
     action = (inp.get("action") or "").strip().lower()
     status = (inp.get("status") or "").strip().lower()
     if action not in ("add", "move") or status not in ("todo", "in_progress", "backlog"):
         return json.dumps({"success": False, "error": "Invalid action or status."})
 
-    path = _resolve_path("kanban", _DEFAULT_KANBAN_PATH)
-    if not path.exists():
-        # Bootstrap empty file on first add
-        if action == "add":
-            obj = {"tasks": []}
-        else:
-            return json.dumps({"success": False, "error": "Kanban file not found."})
-    else:
-        try:
-            obj = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("kanban_write read failed: %s", e)
-            return json.dumps({"success": False, "error": USER_FACING_ERROR})
-
-    tasks = obj.get("tasks", []) if isinstance(obj, dict) else []
+    try:
+        buckets = _parse_kanban_md()
+    except Exception as e:
+        logger.warning("kanban_write parse failed: %s", e)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
     if action == "add":
         title = (inp.get("title") or "").strip()
         if not title:
             return json.dumps({"success": False, "error": "title is required for add."})
-        import uuid
-        new_task = {"id": str(uuid.uuid4())[:8], "title": title, "status": status}
-        tasks.append(new_task)
-        obj["tasks"] = tasks
+        buckets[status].append(title)
         try:
-            path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+            _write_kanban_md(buckets)
         except OSError as e:
             logger.warning("kanban_write write failed: %s", e)
             return json.dumps({"success": False, "error": USER_FACING_ERROR})
-        return json.dumps({"success": True, "message": f"Added '{title}' to {status}.", "task": new_task})
+        return json.dumps({"success": True, "message": f"Added '{title}' to {status}."})
 
-    # action == "move"
-    task_id = (inp.get("task_id") or "").strip()
-    if not task_id:
-        return json.dumps({"success": False, "error": "task_id is required for move."})
-    matched = [t for t in tasks if t.get("id") == task_id]
-    if not matched:
-        return json.dumps({"success": False, "error": f"Task not found: {task_id}"})
-    matched[0]["status"] = status
-    obj["tasks"] = tasks
+    # action == "move" — find task by title substring match
+    title_query = (inp.get("title") or "").strip()
+    if not title_query:
+        return json.dumps({"success": False, "error": "title is required to identify the task to move."})
+
+    found_bucket: str | None = None
+    found_title: str | None = None
+    for bucket_name, items in buckets.items():
+        for item in items:
+            if title_query.lower() in item.lower():
+                found_bucket = bucket_name
+                found_title  = item
+                break
+        if found_bucket:
+            break
+
+    if not found_bucket or not found_title:
+        return json.dumps({"success": False, "error": f"Task not found: {title_query}"})
+
+    buckets[found_bucket].remove(found_title)
+    buckets[status].append(found_title)
     try:
-        path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+        _write_kanban_md(buckets)
     except OSError as e:
         logger.warning("kanban_write write failed: %s", e)
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
-    return json.dumps({"success": True, "message": f"Moved '{matched[0].get('title', task_id)}' to {status}."})
+    return json.dumps({"success": True, "message": f"Moved '{found_title}' from {found_bucket} to {status}."})
 
 
 # Allowlisted scripts for run_tool: script_name -> path relative to REPO_ROOT
@@ -779,6 +820,226 @@ def _run_tool(inp: dict) -> str:
         logger.warning("run_tool %s failed (exit %s): %s", script_name, result.returncode, err)
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
     return out or "(no output)"
+
+
+# ---------------------------------------------------------------------------
+# System configuration and automation
+# ---------------------------------------------------------------------------
+
+def _telegram_groups(inp: dict) -> str:
+    """Query known Telegram groups (autodetected from incoming messages)."""
+    try:
+        from tools.telegram import group_manager
+    except ImportError:
+        sys.path.insert(0, str(REPO_ROOT / "tools" / "telegram"))
+        import group_manager
+
+    action = inp.get("action", "list")
+
+    if action == "list":
+        groups = group_manager.list_groups()
+        return json.dumps({
+            "success": True,
+            "count": len(groups),
+            "groups": groups
+        }, indent=2)
+
+    elif action == "find":
+        name = inp.get("name", "")
+        if not name:
+            return json.dumps({"success": False, "error": "name is required for find action"})
+
+        group = group_manager.get_group_by_name(name)
+        if group:
+            return json.dumps({
+                "success": True,
+                "group": group
+            }, indent=2)
+        else:
+            return json.dumps({
+                "success": False,
+                "error": f"No group found matching: {name}"
+            })
+
+    else:
+        return json.dumps({"success": False, "error": f"Unknown action: {action}"})
+
+
+def _script_writer(inp: dict) -> str:
+    """Generate a Python script from natural language description."""
+    script_writer_path = REPO_ROOT / "tools" / "system" / "script_writer.py"
+    if not script_writer_path.exists():
+        logger.warning("script_writer.py not found at %s", script_writer_path)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+    task_description = inp.get("task_description", "")
+    output_path = inp.get("output_path", "")
+    schedule = inp.get("schedule")
+
+    if not task_description or not output_path:
+        return json.dumps({"success": False, "error": "task_description and output_path are required"})
+
+    # Build command
+    args = [sys.executable, str(script_writer_path), "--task", task_description, "--output", output_path]
+    if schedule:
+        args.extend(["--schedule", schedule])
+
+    # Execute
+    result = _run(args)
+    out = (result.stdout or "").strip()
+    err = (result.stderr or "").strip()
+
+    if result.returncode != 0:
+        logger.warning("script_writer failed (exit %s): %s", result.returncode, err)
+        try:
+            error_data = json.loads(out)
+            return json.dumps(error_data)
+        except json.JSONDecodeError:
+            return json.dumps({"success": False, "error": err or out or USER_FACING_ERROR})
+
+    return out or json.dumps({"success": True})
+
+
+def _conversation_context(inp: dict) -> str:
+    """Get conversation history and patterns."""
+    tracker_path = REPO_ROOT / "tools" / "memory" / "conversation_tracker.py"
+    if not tracker_path.exists():
+        logger.warning("conversation_tracker.py not found")
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+    action = inp.get("action", "recent")
+    args = [sys.executable, str(tracker_path), "--action", action]
+
+    if action == "recent":
+        if "hours" in inp:
+            args.extend(["--hours", str(inp["hours"])])
+        if "limit" in inp:
+            args.extend(["--limit", str(inp["limit"])])
+
+    result = _run(args)
+    if result.returncode != 0:
+        logger.warning("conversation_tracker failed: %s", result.stderr.strip())
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+    return result.stdout.strip() or json.dumps({"success": True})
+
+
+def _proactive_intelligence(inp: dict) -> str:
+    """Get proactive suggestions and insights."""
+    engine_path = REPO_ROOT / "tools" / "intelligence" / "proactive_engine.py"
+    if not engine_path.exists():
+        logger.warning("proactive_engine.py not found")
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+    action = inp.get("action", "suggestions")
+    args = [sys.executable, str(engine_path), "--action", action]
+
+    if action == "intent" and "text" in inp:
+        args.extend(["--text", inp["text"]])
+
+    result = _run(args)
+    if result.returncode != 0:
+        logger.warning("proactive_engine failed: %s", result.stderr.strip())
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+    return result.stdout.strip() or json.dumps({"success": True})
+
+
+def _log_correction(inp: dict) -> str:
+    """Log a user correction for learning."""
+    try:
+        sys.path.insert(0, str(REPO_ROOT / "tools" / "memory"))
+        from conversation_tracker import log_correction
+
+        original = inp.get("original_response", "")
+        correction = inp.get("correction", "")
+        pattern = inp.get("learned_pattern", "")
+
+        if not original or not correction:
+            return json.dumps({"success": False, "error": "original_response and correction required"})
+
+        log_correction(original, correction, learned_pattern=pattern)
+
+        # Also save to memory for long-term retention
+        memory_write_path = REPO_ROOT / "memory" / "memory_write.py"
+        if memory_write_path.exists():
+            content = f"Correction learned: {pattern}" if pattern else f"User corrected: {correction}"
+            _run([
+                sys.executable, str(memory_write_path),
+                "--content", content,
+                "--type", "insight",
+                "--importance", "8",
+                "--source", "correction"
+            ])
+
+        return json.dumps({"success": True, "message": "Correction logged and learned"})
+    except Exception as e:
+        logger.exception("log_correction failed")
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+
+def _system_config(inp: dict) -> str:
+    """Route system configuration actions to system_config.py via subprocess."""
+    config_script = REPO_ROOT / "tools" / "system" / "system_config.py"
+    if not config_script.exists():
+        logger.warning("system_config.py not found at %s", config_script)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+    action = inp.get("action", "")
+    if not action:
+        return json.dumps({"success": False, "error": "action is required."})
+
+    # Build command line arguments
+    args = [sys.executable, str(config_script), "--action", action]
+
+    # Map action-specific parameters
+    if action == "update_chat_id":
+        if "script_name" in inp:
+            args.extend(["--script", inp["script_name"]])
+        if "chat_id" in inp:
+            args.extend(["--chat-id", inp["chat_id"]])
+
+    elif action == "add_cron":
+        if "script_path" in inp:
+            args.extend(["--script-path", inp["script_path"]])
+        if "schedule" in inp:
+            args.extend(["--schedule", inp["schedule"]])
+        if "comment" in inp:
+            args.extend(["--comment", inp["comment"]])
+
+    elif action == "remove_cron":
+        if "pattern" in inp:
+            args.extend(["--pattern", inp["pattern"]])
+
+    elif action == "update_cron_time":
+        if "pattern" in inp:
+            args.extend(["--pattern", inp["pattern"]])
+        if "schedule" in inp:
+            args.extend(["--schedule", inp["schedule"]])
+
+    elif action == "create_youtube_monitor":
+        if "youtube_url" in inp:
+            args.extend(["--monitor-type", "youtube", "--url", inp["youtube_url"]])
+        if "schedule" in inp:
+            args.extend(["--schedule", inp["schedule"]])
+        if "chat_id" in inp:
+            args.extend(["--chat-id", inp["chat_id"]])
+
+    # Execute
+    result = _run(args)
+    out = (result.stdout or "").strip()
+    err = (result.stderr or "").strip()
+
+    if result.returncode != 0:
+        logger.warning("system_config %s failed (exit %s): %s", action, result.returncode, err)
+        # Try to parse error from output
+        try:
+            error_data = json.loads(out)
+            return json.dumps(error_data)
+        except json.JSONDecodeError:
+            return json.dumps({"success": False, "error": err or out or USER_FACING_ERROR})
+
+    return out or json.dumps({"success": True})
 
 
 # ---------------------------------------------------------------------------

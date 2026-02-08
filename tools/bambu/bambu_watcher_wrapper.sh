@@ -12,3 +12,5 @@ exec 200>"$LOCKFILE"
 python3 /Users/printer/atlas/tools/bambu/bambu_watcher.py
 # If any pending prompts exist, send spool prompt
 python3 /Users/printer/atlas/tools/bambu/bambu_prompt_poller.py
+# Process any pending reply to a spool prompt
+python3 /Users/printer/atlas/tools/bambu/bambu_reply_handler.py

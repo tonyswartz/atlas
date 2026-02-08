@@ -378,56 +378,53 @@ def main() -> int:
         except Exception:
             pass
 
-    # Detect completion edge: was printing, now finished, AND it's a new print we haven't logged yet
-    if was_printing and not is_printing_now:
+    def try_handle_completion() -> tuple[str, datetime | None] | None:
+        """If FTP has a new completion vs last_completed, queue prompt and return (latest_name, latest_dt). Else return None (no entries or duplicate)."""
         entries = ftp_list_gcode_3mf()
         if not entries:
-            # Save state even if no entries found
-            save_last_state({
-                "last_seen_at": datetime.now().strftime("%y-%m-%d %H:%M:%S"),
-                "state": cur.get("state"),
-                "progress": cur.get("progress"),
-                "file": file_path,
-                "is_printing": is_printing_now,
-                "last_completed_print": last_completed,
-                "last_completed_at": last.get("last_completed_at"),
-            })
-            return 0
-
+            return None
         latest = entries[0]["name"]
-        latest_dt = entries[0].get("dt")  # file mtime from FTP listing
-
-        # Skip only if same filename AND file wasn't modified after we last logged it (re-slice = new mtime = new print)
+        latest_dt = entries[0].get("dt")
         skip_as_duplicate = False
-        if latest == last_completed and last_completed_at and latest_dt:
-            # Same file name: skip only if this file's mtime is not clearly after our last completion time
-            if latest_dt <= last_completed_at + timedelta(minutes=2):
-                skip_as_duplicate = True
-        elif latest == last_completed and not latest_dt:
-            skip_as_duplicate = True  # no timestamp, fall back to filename-only skip
-
+        if latest == last_completed and last_completed_at:
+            # Same filename: skip only if this is clearly the same print we already logged (not a re-print).
+            # Re-print: we logged this file > 30 min ago, so treat as new completion.
+            if datetime.now() <= last_completed_at + timedelta(minutes=30):
+                if latest_dt and latest_dt <= last_completed_at + timedelta(minutes=2):
+                    skip_as_duplicate = True
+                elif not latest_dt:
+                    skip_as_duplicate = True
         if skip_as_duplicate:
             log(f"Skipping duplicate completion for {latest} (already logged)")
-            skip_state = {
-                "last_seen_at": datetime.now().strftime("%y-%m-%d %H:%M:%S"),
-                "state": cur.get("state"),
-                "progress": cur.get("progress"),
-                "file": file_path,
-                "is_printing": is_printing_now,
-                "last_completed_print": last_completed,
-            }
-            if last.get("last_completed_at"):
-                skip_state["last_completed_at"] = last["last_completed_at"]
-            save_last_state(skip_state)
-            return 0
+            return None
+        write_pending_prompt(latest, source_file=latest)
+        return (latest, latest_dt)
 
-        # Use latest .gcode.3mf name as display title (we do not download/parse — user will provide spool/grams/who via Telegram)
-        print_title = latest
-        write_pending_prompt(print_title, source_file=latest)
-
-        # Update last_completed and timestamp so re-prints of same file (new mtime) still prompt
-        last_completed = latest
-        last_completed_at = latest_dt or datetime.now()
+    # Detect completion: (1) transition was printing -> now finished, or (2) fallback: we're FINISH@100% but missed the transition
+    if was_printing and not is_printing_now:
+        result = try_handle_completion()
+        if result is not None:
+            last_completed, last_completed_at = result[0], result[1] or datetime.now()
+        else:
+            # None = no FTP entries or duplicate. Only early-exit when FTP list is empty (avoid overwriting state).
+            if not ftp_list_gcode_3mf():
+                save_last_state({
+                    "last_seen_at": datetime.now().strftime("%y-%m-%d %H:%M:%S"),
+                    "state": cur.get("state"),
+                    "progress": cur.get("progress"),
+                    "file": file_path,
+                    "is_printing": is_printing_now,
+                    "last_completed_print": last_completed,
+                    "last_completed_at": last.get("last_completed_at"),
+                })
+                return 0
+            # Duplicate: keep last_completed, fall through to save state
+    elif not is_printing_now and state == "FINISH" and pct >= 100:
+        # Fallback: missed transition (e.g. watcher didn't run during print, or machine was asleep)
+        result = try_handle_completion()
+        if result is not None:
+            last_completed, last_completed_at = result[0], result[1] or datetime.now()
+            log("Detected completion via FINISH fallback (missed transition)")
 
     # Build state to save (include last_completed_at when we have it)
     state_to_save = {

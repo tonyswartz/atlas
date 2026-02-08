@@ -23,7 +23,8 @@ from telegram.constants import ChatAction
 
 from config import load_config
 from conversation import handle_message, reset_session, handle_models_command
-from commands import route as route_command, get_trial_prep_message, trigger_restart, can_restart
+from commands import route as route_command, get_trial_prep_message, get_code_directive, trigger_restart, can_restart
+from group_manager import register_chat
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ async def on_message(update: Update, context) -> None:
     config = load_config()
     user = update.effective_user
     user_id = user.id
+    chat = update.effective_chat
 
     # --- Allowlist check ---
     allowed = config.get("bot", {}).get("allowed_user_ids", [])
@@ -57,13 +59,29 @@ async def on_message(update: Update, context) -> None:
         await update.message.reply_text("Sorry, you're not on the access list.")
         return
 
-    logger.info(f"Message from user {user_id} ({user.first_name}): {update.message.text[:80]}")
+    # --- Group autodetection ---
+    # Register groups/supergroups automatically when bot receives messages
+    if chat.type in ("group", "supergroup"):
+        is_new = register_chat(chat.id, chat.type, chat.title, chat.username)
+        if is_new:
+            logger.info("🆕 New group registered: %s (%s)", chat.title, chat.id)
 
-    # --- Substitute /trial [case] with trial-prep directive for the LLM ---
+    logger.info(f"Message from user {user_id} ({user.first_name}) in {chat.type} ({chat.title or 'private'}): {update.message.text[:80]}")
+
+    # --- Side-channel: persist raw message for bambu reply handler polling ---
+    Path("/Users/printer/atlas/memory/last_incoming_message.txt").write_text(
+        update.message.text, encoding="utf-8"
+    )
+
+    # --- Substitute /trial or /code with a directive for the LLM ---
     text = update.message.text
     trial_directive = get_trial_prep_message(text)
     if trial_directive is not None:
         text = trial_directive
+    else:
+        code_directive = get_code_directive(text)
+        if code_directive is not None:
+            text = code_directive
 
     # --- Typing indicator ---
     if config.get("bot", {}).get("typing_indicator", True):

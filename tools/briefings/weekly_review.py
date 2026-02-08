@@ -16,6 +16,18 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+# Import journal and health tools
+try:
+    from tools.briefings.journal_backup import backup_week
+    from tools.briefings.journal_recap import generate_recap
+    from tools.briefings.health_stats import get_week_health_stats, format_health_summary
+except ImportError:
+    # Fallback for direct execution
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+    from tools.briefings.journal_backup import backup_week
+    from tools.briefings.journal_recap import generate_recap
+    from tools.briefings.health_stats import get_week_health_stats, format_health_summary
+
 # Load .env when run by cron
 try:
     from dotenv import load_dotenv
@@ -235,6 +247,15 @@ def _format_review() -> str:
     lines: list[str] = []
     lines.append(f"📋 *Week in Review — {date_range}*\n")
 
+    # --- Journal Recap (AI summary) ---
+    try:
+        recap = generate_recap(mon)
+        if recap and "No entries" not in recap:
+            lines.append(recap)
+            lines.append("")
+    except Exception as e:
+        print(f"Failed to generate journal recap: {e}", file=sys.stderr)
+
     # --- Stats ---
     if this["days"] > 0:
         mood_line = f"• Mood: {this['mood_avg']}/5"
@@ -249,6 +270,15 @@ def _format_review() -> str:
         lines.append("")
     else:
         lines.append("*No journal entries found this week.*\n")
+
+    # --- Health Stats (Oura + Cycling) ---
+    try:
+        health_stats = get_week_health_stats(mon, sun)
+        health_summary = format_health_summary(health_stats)
+        if health_summary.strip():
+            lines.append(health_summary)
+    except Exception as e:
+        print(f"Failed to fetch health stats: {e}", file=sys.stderr)
 
     # --- Nudges ---
     nudges = _compute_nudges(this, prev, kanban)
@@ -306,6 +336,15 @@ def _save_to_obsidian(text: str):
 
 def main():
     print(f"[{datetime.now()}] Running weekly review…")
+
+    # Backup week's journal entries
+    try:
+        backup_path = backup_week()
+        if backup_path:
+            print(f"✓ Journal backup: {backup_path.name}")
+    except Exception as e:
+        print(f"Warning: Journal backup failed: {e}", file=sys.stderr)
+
     review = _format_review()
     print(review)
     _save_to_obsidian(review)
