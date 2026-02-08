@@ -460,7 +460,7 @@ def route(text: str) -> str | None:
 # ---------------------------------------------------------------------------
 CODE_TASK_DIRECTIVE = """\
 You are helping the user create a coding task for the Claude CLI task runner. \
-The task will be added to ClawdBot Kanban and picked up automatically.
+The task will be added to Atlas Tasks and picked up automatically.
 
 Steps:
 1. Call read_file with path "args/projects.yaml" to get available projects and their budgets.

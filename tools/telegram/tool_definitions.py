@@ -342,6 +342,7 @@ TOOL_DEFINITIONS = [
                 "required": ["task"]
             }
         }
+    },
     {
         "type": "function",
         "function": {

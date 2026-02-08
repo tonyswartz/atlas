@@ -55,7 +55,11 @@
       "Bash(/opt/homebrew/bin/gog:*)",
       "Bash(brew list:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(gog auth list:*)",
+      "Bash(gog auth info:*)",
+      "Bash(gog:*)",
+      "Bash(env:*)"
     ]
   }
 }
