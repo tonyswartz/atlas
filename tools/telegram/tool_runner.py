@@ -108,8 +108,6 @@ def execute(tool_name: str, tool_input: dict) -> str:
             return _memory_db(tool_input)
         elif tool_name == "read_goal":
             return _read_goal(tool_input)
-        elif tool_name == "kanban_read":
-            return _kanban_read()
         elif tool_name == "journal_read_recent":
             return _journal_read_recent(tool_input)
         elif tool_name == "reminders_read":
@@ -132,8 +130,6 @@ def execute(tool_name: str, tool_input: dict) -> str:
             return _list_files(tool_input)
         elif tool_name == "reminder_add":
             return _reminder_add(tool_input)
-        elif tool_name == "kanban_write":
-            return _kanban_write(tool_input)
         elif tool_name == "bambu":
             return _bambu(tool_input)
         elif tool_name == "browser_search":
@@ -295,72 +291,6 @@ def _read_goal(inp: dict) -> str:
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
     return target.read_text(encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# Kanban  (ClawdBot Kanban.md — single source of truth)
-# ---------------------------------------------------------------------------
-
-_CLAWDBOT_KANBAN = Path(
-    "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/ClawdBot Kanban.md"
-)
-
-_KAN_HEADER_MAP = {
-    "[to-do]": "todo",
-    "[in progress]": "in_progress",
-    "[backlog]": "backlog",
-    "[done]": "completed",
-}
-
-
-def _parse_kanban_md() -> dict[str, list[str]]:
-    """Parse ClawdBot Kanban.md into {todo, in_progress, backlog, completed}."""
-    buckets: dict[str, list[str]] = {
-        "todo": [], "in_progress": [], "backlog": [], "completed": []
-    }
-    if not _CLAWDBOT_KANBAN.exists():
-        return buckets
-    current: str | None = None
-    for raw in _CLAWDBOT_KANBAN.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        key = _KAN_HEADER_MAP.get(line.lower())
-        if key:
-            current = key
-            continue
-        if current and line.startswith("-"):
-            title = line[1:].strip()
-            if title:
-                buckets[current].append(title)
-    return buckets
-
-
-def _write_kanban_md(buckets: dict[str, list[str]]) -> None:
-    """Write buckets back to ClawdBot Kanban.md in standard format."""
-    def section(header: str, items: list[str]) -> str:
-        lines = [header]
-        lines += [f"- {t}" for t in items] if items else ["- "]
-        return "\n".join(lines)
-
-    content = "\n\n".join([
-        section("[To-Do]",       buckets.get("todo", [])),
-        section("[In Progress]", buckets.get("in_progress", [])),
-        section("[Backlog]",     buckets.get("backlog", [])),
-        section("[Done]",        buckets.get("completed", [])),
-    ]) + "\n"
-    _CLAWDBOT_KANBAN.write_text(content, encoding="utf-8")
-
-
-def _kanban_read() -> str:
-    """Read To-Do, In Progress, Backlog from ClawdBot Kanban.md."""
-    buckets = _parse_kanban_md()
-    return json.dumps({
-        "success": True,
-        "todo":        buckets["todo"],
-        "in_progress": buckets["in_progress"],
-        "backlog":     buckets["backlog"],
-    }, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -737,60 +667,6 @@ def _reminder_add(inp: dict) -> str:
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
     msg = result.stdout.strip() or "Reminder added."
     return json.dumps({"success": True, "message": msg})
-
-
-def _kanban_write(inp: dict) -> str:
-    """Add or move a task in ClawdBot Kanban.md."""
-    action = (inp.get("action") or "").strip().lower()
-    status = (inp.get("status") or "").strip().lower()
-    if action not in ("add", "move") or status not in ("todo", "in_progress", "backlog"):
-        return json.dumps({"success": False, "error": "Invalid action or status."})
-
-    try:
-        buckets = _parse_kanban_md()
-    except Exception as e:
-        logger.warning("kanban_write parse failed: %s", e)
-        return json.dumps({"success": False, "error": USER_FACING_ERROR})
-
-    if action == "add":
-        title = (inp.get("title") or "").strip()
-        if not title:
-            return json.dumps({"success": False, "error": "title is required for add."})
-        buckets[status].append(title)
-        try:
-            _write_kanban_md(buckets)
-        except OSError as e:
-            logger.warning("kanban_write write failed: %s", e)
-            return json.dumps({"success": False, "error": USER_FACING_ERROR})
-        return json.dumps({"success": True, "message": f"Added '{title}' to {status}."})
-
-    # action == "move" — find task by title substring match
-    title_query = (inp.get("title") or "").strip()
-    if not title_query:
-        return json.dumps({"success": False, "error": "title is required to identify the task to move."})
-
-    found_bucket: str | None = None
-    found_title: str | None = None
-    for bucket_name, items in buckets.items():
-        for item in items:
-            if title_query.lower() in item.lower():
-                found_bucket = bucket_name
-                found_title  = item
-                break
-        if found_bucket:
-            break
-
-    if not found_bucket or not found_title:
-        return json.dumps({"success": False, "error": f"Task not found: {title_query}"})
-
-    buckets[found_bucket].remove(found_title)
-    buckets[status].append(found_title)
-    try:
-        _write_kanban_md(buckets)
-    except OSError as e:
-        logger.warning("kanban_write write failed: %s", e)
-        return json.dumps({"success": False, "error": USER_FACING_ERROR})
-    return json.dumps({"success": True, "message": f"Moved '{found_title}' from {found_bucket} to {status}."})
 
 
 # Allowlisted scripts for run_tool: script_name -> path relative to REPO_ROOT

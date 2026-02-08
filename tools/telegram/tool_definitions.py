@@ -186,18 +186,6 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "kanban_read",
-            "description": "Read the user's task/Kanban list (To-Do, In Progress, Backlog). Use when the user asks about priorities, what's on their plate, or what they should focus on. Read-only; does not modify tasks.",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "journal_read_recent",
             "description": "Read the user's recent journal entries (from Obsidian export CSV). Use when the user asks about their priorities, what they need to do, what's on their mind, or what they've been thinking — recent journal text often states goals and to-dos. Returns last N days of entries with date and entry text. Read-only.",
             "parameters": {
@@ -354,34 +342,6 @@ TOOL_DEFINITIONS = [
                 "required": ["task"]
             }
         }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "kanban_write",
-            "description": "Add or move a task on ClawdBot Kanban (Obsidian). IMPORTANT: Always confirm with the user before calling this — say what you're about to do and wait for a 'yes' or 'ok'. Actions: 'add' creates a new task, 'move' changes an existing task's status (matches by title). Statuses: todo, in_progress, backlog.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["add", "move"],
-                        "description": "'add' to create a new task, 'move' to change an existing task's status."
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "Task title. Required for both 'add' and 'move'. For 'move', used as a substring match against existing tasks — use kanban_read first to get exact titles."
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["todo", "in_progress", "backlog"],
-                        "description": "Target status."
-                    }
-                },
-                "required": ["action", "title", "status"]
-            }
-        }
-    },
     {
         "type": "function",
         "function": {

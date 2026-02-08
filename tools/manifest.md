@@ -20,7 +20,7 @@ Master list of tools and their functions. Before writing new code, check this li
 |------|-------------|
 | `tools/telegram/bot.py` | Entry point — starts Telegram polling loop, routes messages, enforces allowlist. |
 | `tools/telegram/conversation.py` | Claude tool_use loop — manages per-user history, loads memory on session start, returns final reply. |
-| `tools/telegram/tool_runner.py` | Executes memory scripts as subprocesses, translates Claude tool inputs into CLI flags, parses JSON output. Exposes kanban_read, journal_read_recent, reminders_read, heartbeat_read (read-only). Paths configurable via args/telegram.yaml paths section. |
+| `tools/telegram/tool_runner.py` | Executes memory scripts as subprocesses, translates Claude tool inputs into CLI flags, parses JSON output. Exposes journal_read_recent, reminders_read, heartbeat_read (read-only). Paths configurable via args/telegram.yaml paths section. |
 | `tools/telegram/tool_definitions.py` | Anthropic tool schemas (pure data) — defines what tools Claude can call and their argument shapes. |
 | `tools/telegram/config.py` | Loads `args/telegram.yaml` and `.env` into a cached runtime config dict. |
 | `tools/telegram/commands.py` | Slash-command router — intercepts /commands before the LLM. Captures (/random /travel /food etc), /rotary agenda gen, /run, /help. |
@@ -70,10 +70,7 @@ Master list of tools and their functions. Before writing new code, check this li
 
 | Tool | Description |
 |------|-------------|
-| `tools/tasks/kanban_runner.py` | Polls Obsidian Kanban every 15 min; executes approved [run] tasks. Skips [project] tasks (owned by claude_task_runner). |
-| `tools/tasks/kanban_runner_wrapper.sh` | Cron wrapper with flock for kanban_runner. |
 | `tools/tasks/claude_task_runner.py` | Polls Kanban for [project] tasks, runs them via `claude -p`, shows diff, commits on [approved]. Quota-aware with auto-resume. |
-| `tools/tasks/sync_kanban_to_obsidian.py` | Legacy sync from tasks.json to Obsidian Kanban (not actively used). |
 
 ## Heartbeat (`tools/heartbeat/`)
 
