@@ -1,5 +1,5 @@
 {
-  "timestamp": "26-02-04 13:30",
+  "timestamp": "26-02-05 06:55",
   "print_name": "Baby_Toddler_Cabinet_Lock_v2_(Built_in_Spring).gcode.3mf",
   "options": [
     {
@@ -132,5 +132,8 @@
       "spool_id": "cml0iyh7f0011rj63z0dndlpb",
       "label": "Bambu Lab Black | 1000g"
     }
-  ]
+  ],
+  "prefilled_spool_id": "cml8e4u9h0002689nqyr107qk",
+  "prefilled_spool_n": 4,
+  "prefilled_grams": 74.6
 }

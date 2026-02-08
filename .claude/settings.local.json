@@ -39,7 +39,23 @@
       "Bash(xargs -I{} curl -s -X POST https://api.minimax.chat/v1/chat/completions -H 'Content-Type: application/json' -H 'Authorization: Bearer {}' -d '{\"\"model\"\":\"\"MiniMax-01\"\",\"\"messages\"\":[{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"say hi\"\"}],\"\"max_tokens\"\":20}')",
       "Bash(/opt/homebrew/bin/bambu-cli:*)",
       "Bash(mkdir:*)",
-      "Bash(echo \"EXIT:$?\")"
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(/Users/printer/.local/bin/claude:*)",
+      "Bash(log show:*)",
+      "Bash(chmod:*)",
+      "Bash(test:*)",
+      "Bash(claude mcp list:*)",
+      "Bash(gh repo list:*)",
+      "Bash(gh repo clone:*)",
+      "Bash(find:*)",
+      "Bash(lsof:*)",
+      "Bash(/opt/homebrew/bin/gog calendar list:*)",
+      "Bash(/opt/homebrew/bin/gog calendar auth add:*)",
+      "Bash(/opt/homebrew/bin/gog calendar:*)",
+      "Bash(/opt/homebrew/bin/gog:*)",
+      "Bash(brew list:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

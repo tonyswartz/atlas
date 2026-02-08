@@ -182,6 +182,7 @@ def main() -> int:
     if log_to_jeevesui(spool_id, user_name, filename, float(grams)):
         append_print_log(filename, spool_label or "(unknown)", float(grams))
         log(f"Logged {grams}g to spool {spool_id} (user: {user_name})")
+        OPTIONS_FILE.unlink(missing_ok=True)
 
     LAST_REPLY_FILE.write_text(last_line, encoding="utf-8")
     return 0

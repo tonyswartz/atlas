@@ -1,0 +1,11 @@
+# Project registry for claude_task_runner.
+# Kanban tasks matching [project_name] are routed to the matching entry here.
+# Add new projects below; set path (absolute) and budget_usd per run.
+
+defaults:
+  budget_usd: 2.0
+
+projects:
+  atlas:
+    path: /Users/printer/atlas
+    budget_usd: 5.0

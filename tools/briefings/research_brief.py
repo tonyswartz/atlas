@@ -26,7 +26,7 @@ except ImportError:
 
 # Configuration
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = "8241581699"
+TELEGRAM_CHAT_ID = "-5254628791"  # Daily group
 STATE_FILE = "/Users/printer/atlas/data/research_brief_state.json"
 
 # Google News RSS URLs
@@ -226,23 +226,31 @@ def main():
         if articles:
             all_results[topic] = articles
     
-    # Build message with each topic as its own section (matching Clawdbot style)
+    # Build message per topic to avoid truncation
     TOPIC_ORDER = ["Apple", "AI", "Bambu Lab", "Vibe Coding", "Seattle Kraken"]
     if all_results:
         date_str = datetime.now().strftime("%b %d, %Y")
-        message = f"📰 *Research Brief — {date_str}*\n\n"
 
-        for topic in TOPIC_ORDER:
+        # Send one message per topic
+        for i, topic in enumerate(TOPIC_ORDER):
             if topic not in all_results:
                 continue
-            message += f"*{topic.upper()}*\n"
-            lines = format_articles(all_results[topic], max_count=5)
-            for line in lines:
-                message += line + "\n"
-            message += "\n"
 
-        message += f"_{new_articles} new articles_"
-        send_telegram_chunked(message)
+            if i == 0:
+                header = f"📰 *Research Brief — {topic}* ({date_str})"
+            else:
+                header = f"📰 *Research Brief — {topic}*"
+
+            lines = format_articles(all_results[topic], max_count=5)
+            message = header + "\n\n" + "\n".join(lines)
+
+            if i == len([t for t in TOPIC_ORDER if t in all_results]) - 1:
+                message += f"\n\n_{new_articles} new articles total_"
+
+            send_telegram(message)
+            if i < len(TOPIC_ORDER) - 1:
+                time.sleep(0.3)
+
         print(f"  Sent {new_articles} new articles")
     else:
         send_telegram("🔍 *3pm Research Brief* — no new articles today.")

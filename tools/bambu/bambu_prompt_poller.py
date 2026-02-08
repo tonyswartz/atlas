@@ -362,6 +362,17 @@ def main() -> int:
         print_name = prompt.get("print_name", "(unknown)")
         ts = prompt.get("timestamp", "")
 
+        # Skip if we already sent a prompt for this print and are waiting on a reply
+        if OPTIONS_FILE.exists():
+            try:
+                prev = json.loads(OPTIONS_FILE.read_text(encoding="utf-8"))
+                if prev.get("print_name") == print_name:
+                    log(f"Already prompted for {print_name}, waiting for reply — skipping")
+                    mark_sent(print_name)
+                    break
+            except Exception:
+                pass
+
         # Download + parse slice_info from the 3mf to pre-fill spool and grams
         slice_info = None
         try:

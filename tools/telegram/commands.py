@@ -456,6 +456,35 @@ def route(text: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# /code — create a Claude CLI coding task via conversation
+# ---------------------------------------------------------------------------
+CODE_TASK_DIRECTIVE = """\
+You are helping the user create a coding task for the Claude CLI task runner. \
+The task will be added to ClawdBot Kanban and picked up automatically.
+
+Steps:
+1. Call read_file with path "args/projects.yaml" to get available projects and their budgets.
+2. Ask the user which project they want to work on. Show the available options.
+3. Ask what they want done — get enough detail for a clear, actionable task.
+4. Draft a single-sentence description. Keep it tight.
+5. Confirm before adding: "I'll add this → [project] description. Sound good?"
+6. On confirmation, call kanban_write: action=add, title="[project] description", status=todo.
+7. Reply: "Added ✓ — picks up on the next poll."
+
+Keep it short. One or two questions at a time. Don't explain the system unless asked."""
+
+
+def get_code_directive(text: str) -> str | None:
+    """If text is /code [optional args], return the directive; else None."""
+    t = text.strip()
+    if not t.lower().startswith("/code"):
+        return None
+    rest = t[5:].strip()
+    user_hint = f"\n\nThe user typed: /code {rest}" if rest else ""
+    return CODE_TASK_DIRECTIVE + user_hint
+
+
+# ---------------------------------------------------------------------------
 # Trial prep: substitute /trial [case] with a directive for the LLM
 # ---------------------------------------------------------------------------
 TRIAL_PREP_DIRECTIVE = """You are starting DUI trial prep. Follow the Case Prep Guide and templates.

@@ -359,7 +359,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "kanban_write",
-            "description": "Add or move a task on the Kanban board. IMPORTANT: Always confirm with the user before calling this — say what you're about to do and wait for a 'yes' or 'ok'. Actions: 'add' creates a new task, 'move' changes an existing task's status. Statuses: todo, in_progress, backlog.",
+            "description": "Add or move a task on ClawdBot Kanban (Obsidian). IMPORTANT: Always confirm with the user before calling this — say what you're about to do and wait for a 'yes' or 'ok'. Actions: 'add' creates a new task, 'move' changes an existing task's status (matches by title). Statuses: todo, in_progress, backlog.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -370,19 +370,15 @@ TOOL_DEFINITIONS = [
                     },
                     "title": {
                         "type": "string",
-                        "description": "Task title. Required for 'add'."
+                        "description": "Task title. Required for both 'add' and 'move'. For 'move', used as a substring match against existing tasks — use kanban_read first to get exact titles."
                     },
                     "status": {
                         "type": "string",
                         "enum": ["todo", "in_progress", "backlog"],
                         "description": "Target status."
-                    },
-                    "task_id": {
-                        "type": "string",
-                        "description": "ID of the task to move. Required for 'move'. Use kanban_read first to get IDs."
                     }
                 },
-                "required": ["action", "status"]
+                "required": ["action", "title", "status"]
             }
         }
     },
@@ -734,6 +730,184 @@ TOOL_DEFINITIONS = [
                     }
                 },
                 "required": ["instructions"]
+            }
+        }
+    },
+    # ---------------------------------------------------------------------------
+    # Telegram groups
+    # ---------------------------------------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "telegram_groups",
+            "description": "Query known Telegram groups (autodetected when bot receives messages in groups). Use to find group chat IDs for routing briefings or messages. Returns list of groups with IDs, titles, and types.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "find"],
+                        "description": "list: return all known groups. find: search for a group by name."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "For find action: group name or partial name to search for."
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    # ---------------------------------------------------------------------------
+    # System configuration and automation
+    # ---------------------------------------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "system_config",
+            "description": "Configure system automations: update chat IDs for briefings, manage cron schedules, create new monitors (YouTube, RSS). Use when the user wants to set up recurring automations, change when/where briefings are sent, or monitor external sources. IMPORTANT: Always explain what you're about to do and get confirmation before making changes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["update_chat_id", "add_cron", "remove_cron", "update_cron_time", "create_youtube_monitor", "list_automations"],
+                        "description": "update_chat_id: change where a briefing sends. add_cron: schedule a new automation. remove_cron: stop an automation. update_cron_time: change schedule. create_youtube_monitor: watch YouTube channel for new videos. list_automations: show all active automations."
+                    },
+                    "script_name": {
+                        "type": "string",
+                        "enum": ["daily_brief", "research_brief", "local_news", "weekly_review"],
+                        "description": "For update_chat_id: which briefing to update."
+                    },
+                    "chat_id": {
+                        "type": "string",
+                        "description": "Telegram chat ID (group or individual). For groups, the bot must be a member. User should provide this ID."
+                    },
+                    "schedule": {
+                        "type": "string",
+                        "description": "Cron schedule. Examples: '0 6 * * *' (6am daily), '0 17 * * *' (5pm daily), '0 12 * * 1' (noon Mondays), '*/15 * * * *' (every 15 min)."
+                    },
+                    "script_path": {
+                        "type": "string",
+                        "description": "For add_cron: path to script relative to repo root (e.g., 'tools/briefings/daily_brief.py')."
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "For remove_cron or update_cron_time: substring to match in cron job command (e.g., 'daily_brief.py')."
+                    },
+                    "youtube_url": {
+                        "type": "string",
+                        "description": "For create_youtube_monitor: YouTube channel URL (e.g., 'https://youtube.com/@username')."
+                    },
+                    "comment": {
+                        "type": "string",
+                        "description": "Optional comment for cron job entry."
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "script_writer",
+            "description": "Generate a Python script from natural language description. Use when the user asks for custom automation, a one-off task, or wants you to write a script. Creates a working Python script with proper error handling, logging, and integration with atlas patterns.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_description": {
+                        "type": "string",
+                        "description": "Natural language description of what the script should do. Be detailed about inputs, outputs, and behavior."
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": "Where to save the script relative to repo root. E.g., 'tools/custom/my_script.py' or 'tools/monitors/check_website.py'."
+                    },
+                    "schedule": {
+                        "type": "string",
+                        "description": "Optional cron schedule if this should run automatically. E.g., '0 17 * * *' for 5pm daily."
+                    }
+                },
+                "required": ["task_description", "output_path"]
+            }
+        }
+    },
+    # ---------------------------------------------------------------------------
+    # Conversation intelligence & learning
+    # ---------------------------------------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "conversation_context",
+            "description": "Get recent conversation history and detected patterns. Use to maintain context across messages, understand what user meant by 'that' or 'it', and learn from past interactions. Call this when user references previous conversation or when you need to understand repeated patterns.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["recent", "patterns", "corrections"],
+                        "description": "recent: get last N conversation turns. patterns: get detected behavioral patterns. corrections: get summary of times user corrected you."
+                    },
+                    "hours": {
+                        "type": "integer",
+                        "description": "For recent action: how many hours of history to fetch (default 24).",
+                        "default": 24
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "For recent action: max conversation turns to return (default 20).",
+                        "default": 20
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "proactive_intelligence",
+            "description": "Get proactive suggestions and insights based on patterns, context, and time. Use when you want to anticipate user needs, surface relevant information before being asked, or provide context-aware nudges. Call this at start of conversation or when user asks open-ended questions like 'what should I focus on?'",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["suggestions", "brief", "intent"],
+                        "description": "suggestions: get list of proactive suggestions. brief: get formatted brief for display. intent: predict intent from partial message."
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "For intent action: partial user message to analyze."
+                    }
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "log_correction",
+            "description": "Log when user corrects your response. Use when user says you're wrong, provides a correction, or clarifies something you misunderstood. This helps you learn and improve over time. IMPORTANT: Always call this when corrected so the system learns.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "original_response": {
+                        "type": "string",
+                        "description": "What you said that was wrong or unclear."
+                    },
+                    "correction": {
+                        "type": "string",
+                        "description": "What the user said to correct you."
+                    },
+                    "learned_pattern": {
+                        "type": "string",
+                        "description": "Brief description of what to remember (e.g., 'User prefers metric units' or 'Client name is Smith not Smyth')."
+                    }
+                },
+                "required": ["original_response", "correction", "learned_pattern"]
             }
         }
     }

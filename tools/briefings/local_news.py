@@ -11,6 +11,7 @@ import os
 import re
 import hashlib
 import time
+import html as html_lib
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -26,7 +27,7 @@ except ImportError:
     pass
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "8241581699")
+TELEGRAM_CHAT_ID = "-5254628791"  # Daily group
 
 # Config
 TZ = ZoneInfo("America/Los_Angeles")
@@ -139,8 +140,8 @@ def extract_article_summary(html: str, max_sentences: int = 3, max_chars: int = 
                     break
     if not text:
         return ""
-    # Decode common entities
-    text = text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+    # Decode all HTML entities (including &ldquo;, &mdash;, &#x2018;, etc.)
+    text = html_lib.unescape(text)
     text = re.sub(r'\s+', ' ', text).strip()
     # Take first 2–3 sentences
     sentences = re.split(r'(?<=[.!?])\s+', text)
@@ -337,8 +338,8 @@ def fetch_news() -> dict:
     return all_articles
 
 
-def generate_summary(articles: list, state: dict) -> str:
-    """Generate summary of new articles. Skips any story we've already shown (by title or URL)."""
+def generate_summary(articles: list, state: dict) -> tuple[str, dict[str, str]]:
+    """Generate summary of new articles. Returns (plain_text, telegram_by_region_dict). Skips any story we've already shown (by title or URL)."""
     seen_hashes = set(state.get("seen_hashes", []))
     new_articles = []
 
@@ -354,7 +355,7 @@ def generate_summary(articles: list, state: dict) -> str:
         new_articles.append(art)
 
     if not new_articles:
-        return "No new stories since last check.", "No new stories since last check."
+        return "No new stories since last check.", {}
 
     # Sort by importance, then by region priority (Ellensburg > Yakima > Seattle)
     region_priority = {"Ellensburg": 0, "Yakima": 1, "Seattle": 2}
@@ -380,11 +381,11 @@ def generate_summary(articles: list, state: dict) -> str:
         time.sleep(0.8)  # Be nice to servers
 
     lines = []
-    lines_telegram = []
+    telegram_by_region = {}
     regions_with_content = [r for r in ["Ellensburg", "Yakima", "Seattle"] if r in by_region]
     for i, region in enumerate(regions_with_content):
         lines.append(f"**{region}:**")
-        lines_telegram.append(f"*{region}:*")
+        region_lines = []
         for art in by_region[region][:5]:  # Top 5 per region
             importance_marker = "🔴 " if art["importance"] >= 3 else ""
             title = art["title"]
@@ -395,16 +396,16 @@ def generate_summary(articles: list, state: dict) -> str:
             summary_tg = escape_telegram_markdown(summary)
             if url and summary:
                 lines.append(f"• {importance_marker}[{title}]({url}): {summary}")
-                lines_telegram.append(f"• {importance_marker}[{title_tg}]({url}): {summary_tg}")
+                region_lines.append(f"• {importance_marker}[{title_tg}]({url}): {summary_tg}")
             elif url:
                 lines.append(f"• {importance_marker}[{title}]({url})")
-                lines_telegram.append(f"• {importance_marker}[{title_tg}]({url})")
+                region_lines.append(f"• {importance_marker}[{title_tg}]({url})")
             else:
                 lines.append(f"• {importance_marker}{title}")
-                lines_telegram.append(f"• {importance_marker}{title_tg}")
+                region_lines.append(f"• {importance_marker}{title_tg}")
+        telegram_by_region[region] = "\n".join(region_lines)
         if i < len(regions_with_content) - 1:
             lines.append("")
-            lines_telegram.append("")
 
     # Record shown stories so we don't repeat: store both title and URL hashes, cap size
     to_add = []
@@ -416,8 +417,7 @@ def generate_summary(articles: list, state: dict) -> str:
     state["seen_hashes"] = all_hashes[-1000:]  # keep last 1000 hashes (~500 stories with title+url)
 
     plain = "\n".join(lines).strip()
-    telegram = "\n".join(lines_telegram).strip()
-    return plain, telegram
+    return plain, telegram_by_region
 
 
 def log_to_obsidian(summary: str, article_count: int):
@@ -502,24 +502,24 @@ def main():
     # Fetch news
     articles = fetch_news()
     
-    # Generate summary (plain for print/log, escaped for Telegram)
-    summary_plain, summary_telegram = generate_summary(articles, state)
-    
+    # Generate summary (plain for print/log, dict per region for Telegram)
+    summary_plain, telegram_by_region = generate_summary(articles, state)
+
     # Update state
     state["last_run"] = datetime.now(TZ).isoformat()
     save_state(state)
-    
+
     # Log to Obsidian
     try:
         log_to_obsidian(summary_plain, len(articles))
     except Exception as e:
         pass  # Don't fail if logging fails
-    
+
     # Output
     now = datetime.now(TZ)
     date_str = now.strftime("%y-%m-%d")
     day_name = now.strftime("%a")
-    
+
     if last_run:
         last_dt = datetime.fromisoformat(last_run)
         if last_dt.tzinfo is None:
@@ -532,15 +532,26 @@ def main():
             time_str = f"{hours:.0f}h ago"
         else:
             time_str = f"{hours / 24:.1f}d ago"
-        header = f"📰 *Local News* (since {time_str})\n\n"
+        time_str_display = time_str
     else:
-        header = "📰 *Local News*\n\n"
+        time_str_display = ""
 
-    print(f"📰 **Local News** (since {time_str})\n" if last_run else "📰 **Local News**\n")
+    print(f"📰 **Local News** (since {time_str_display})\n" if last_run else "📰 **Local News**\n")
     print(summary_plain)
 
-    # Send to Telegram when run by cron (e.g. 12pm); split into multiple messages if needed
-    send_telegram_chunked(header + summary_telegram)
+    # Send to Telegram: one message per region (Ellensburg, Yakima, Seattle)
+    if telegram_by_region:
+        for i, region in enumerate(["Ellensburg", "Yakima", "Seattle"]):
+            if region not in telegram_by_region:
+                continue
+            if i == 0:
+                header = f"📰 *Local News — {region}*" + (f" (since {time_str_display})" if last_run else "")
+            else:
+                header = f"📰 *Local News — {region}*"
+            message = f"{header}\n\n{telegram_by_region[region]}"
+            send_telegram(message)
+            if i < 2:  # Small delay between messages
+                time.sleep(0.3)
 
 
 if __name__ == "__main__":
