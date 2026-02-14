@@ -639,9 +639,15 @@ def _read_file(inp: dict) -> str:
         return json.dumps({"success": False, "error": "path is required."})
     target = (REPO_ROOT / raw).resolve()
     try:
-        target.relative_to(REPO_ROOT.resolve())
+        rel_path = target.relative_to(REPO_ROOT.resolve())
     except ValueError:
         return json.dumps({"success": False, "error": "Path is outside the repo."})
+
+    # Security: Block access to sensitive files and directories
+    for part in rel_path.parts:
+        if part == ".git" or part == ".env" or part.startswith(".env.") or part in ("credentials.json", "token.json"):
+            return json.dumps({"success": False, "error": "Access denied to sensitive file."})
+
     if not target.is_file():
         return json.dumps({"success": False, "error": f"File not found: {raw}"})
     try:
