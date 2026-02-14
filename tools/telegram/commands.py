@@ -356,21 +356,35 @@ def _cmd_reminder(arg: str) -> str:
 # /help
 # ---------------------------------------------------------------------------
 HELP_TEXT = """\
-/random <text>  — save idea to Random Ideas (auto-categorised)
-/travel <text>  — save to Travel Ideas (auto-categorised by country)
-/quote  <text>  — save quote
-/link   <text>  — save link
-/gift   <text>  — save gift idea
-/food   <text>  — save food/restaurant idea
-/reminder <task> [schedule] — add to Tony Reminders (weekly/daily/monthly, tomorrow, in N days, 2/15, feb 15, etc.)
-/trial  [name]  — start DUI trial prep (questions from Case Prep Guide + templates)
-/rotary         — generate next Rotary meeting agenda
-/run    <name>  — run script: daily_brief, research_brief, weekly_review, local_news, …
-/restart        — restart the bot (allowlisted users only)
-/models [id]    — list models or switch session to ollama / minimax
-/reset          — clear conversation session
-/new            — same as /reset: start fresh (new context on next message)
-/help           — this message"""
+🤖 Available Commands
+
+💡 Capture Ideas
+/random <text> — General ideas
+/travel <text> — Travel ideas
+/quote <text>  — Save a quote
+/link <text>   — Save a link
+/gift <text>   — Gift ideas
+/food <text>   — Food/Restaurant ideas
+
+📅 Planning & Tasks
+/reminder <task> [schedule] — Add to Reminders
+/rotary — Generate next Rotary agenda
+/trial [name] — Start DUI trial prep
+
+⚙️ System & Tools
+/run <script> — Run daily brief, news, etc.
+/models [id] — List/switch AI models
+/reset — Clear conversation context
+/restart — Restart the bot (Admin only)
+/help — Show this menu
+"""
+
+START_TEXT = """\
+👋 Hello! I'm your AI Assistant.
+
+I can help you capture ideas, manage tasks, and run tools.
+Type /help to see what I can do, or just start chatting!
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +423,7 @@ _DISPATCH: dict[str, callable] = {
     "rotary":    lambda _:  _cmd_rotary(),
     "run":       lambda arg: _cmd_run(arg),
     "help":      lambda _:  HELP_TEXT,
+    "start":     lambda _:  START_TEXT,
 }
 
 
