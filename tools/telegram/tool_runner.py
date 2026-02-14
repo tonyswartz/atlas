@@ -20,6 +20,12 @@ from config import get_repo_root, load_config
 
 REPO_ROOT = get_repo_root()
 
+# Ensure we can import from the repo root (e.g. memory module)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+import memory.memory_read
+
 
 def _resolve_path(key: str, default: Path) -> Path:
     """Resolve path from config paths section or use default. Paths can be absolute or relative to repo root."""
@@ -152,25 +158,50 @@ def execute(tool_name: str, tool_input: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _memory_read(inp: dict) -> str:
-    args = [sys.executable, "memory/memory_read.py"]
+    """
+    Directly call memory.memory_read.load_all_memory to avoid subprocess overhead.
+    """
+    try:
+        # Map arguments
+        # memory_read.py logic:
+        # include_memory = not args.logs_only
+        # include_logs = not args.memory_only
+        include_memory = not inp.get("logs_only")
+        include_logs = not inp.get("memory_only")
+        include_db = inp.get("include_db", False)
+        log_days = int(inp.get("days", 2))
 
-    fmt = inp.get("format", "json")
-    args.extend(["--format", fmt])
+        # Call directly
+        context = memory.memory_read.load_all_memory(
+            include_memory=include_memory,
+            include_logs=include_logs,
+            include_db=include_db,
+            log_days=log_days
+            # db_hours default is 24, min_importance default is 5
+        )
 
-    if inp.get("include_db"):
-        args.append("--include-db")
-    if inp.get("memory_only"):
-        args.append("--memory-only")
-    if inp.get("logs_only"):
-        args.append("--logs-only")
-    if "days" in inp:
-        args.extend(["--days", str(inp["days"])])
+        # Format output
+        fmt = inp.get("format", "json")
+        if fmt == "markdown":
+            return memory.memory_read.format_as_markdown(context)
+        elif fmt == "summary":
+            summary = context.get('summary', {})
+            return json.dumps({
+                "success": True,
+                "loaded_at": context.get('loaded_at'),
+                "memory_file_loaded": context.get('memory_file', {}).get('success', False),
+                "memory_sections": summary.get('memory_sections', []),
+                "logs_loaded": summary.get('logs_loaded', 0),
+                "log_dates": summary.get('log_dates', []),
+                "db_entries_loaded": summary.get('db_entries_loaded', 0)
+            }, indent=2)
+        else:
+            # Default to JSON
+            return json.dumps(context, indent=2, default=str)
 
-    result = _run(args)
-    if result.returncode != 0:
-        logger.warning("memory_read failed: %s", result.stderr.strip())
+    except Exception as e:
+        logger.exception("memory_read direct call failed")
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
-    return _parse_output(result.stdout)
 
 
 def _memory_write(inp: dict) -> str:
