@@ -7,9 +7,7 @@ Use this to get Atlas fully functional. Do these in order.
 ## 1. Environment and dependencies
 
 - **Python 3** — Atlas scripts assume `python3` on PATH. Use 3.10+.
-- **.env** — In the Atlas repo root, ensure `.env` exists and contains:
-  - `TELEGRAM_BOT_TOKEN=<your_bot_token>` — From [@BotFather](https://t.me/BotFather) on Telegram. Required for the bot.
-  - Optional: `OPENAI_API_KEY` — Only if you want semantic/hybrid memory search or tools that call OpenAI.
+- **Secrets** — Either **.env** in the repo root or **envchain** (Apple Keychain; see `docs/ENVCHAIN.md`). Required: `TELEGRAM_BOT_TOKEN` from [@BotFather](https://t.me/BotFather). Optional: `OPENAI_API_KEY` for semantic/hybrid memory and OpenAI-using tools.
 - **Install Python deps:** From repo root:
   ```bash
   pip install -r requirements.txt
@@ -58,13 +56,12 @@ After this, the bot starts at login. Logs: `~/Library/Logs/telegram-bot.log` and
 
 ## 5. Scheduled jobs (Bambu + Kanban)
 
-To run Bambu watcher and Kanban runner on a schedule:
+To run scheduled jobs (Bambu, briefings, etc.):
 
-- Run `crontab -e` and add the two lines from [docs/CRON.md](CRON.md):
-  - Bambu: every 5 minutes
-  - Kanban: every 15 minutes
+- **Preferred:** launchd (works with envchain): `./launchd/install-launchd.sh` — see [docs/CRON.md](CRON.md) and `launchd/README.md`.
+- **Or** run `crontab -e` and add the envchain-wrapped lines from [docs/CRON.md](CRON.md).
 
-If you skip this, you can still run the wrappers by hand when needed.
+If you skip this, you can still run the scripts by hand when needed.
 
 ---
 

@@ -1,0 +1,46 @@
+# Example Workflow: Print Completion with Low Stock Alert
+# Triggered when Bambu agent detects completed print with low filament
+
+name: "Print completion with low stock alert"
+
+trigger:
+  agent: bambu
+  event: print_complete_low_stock
+
+steps:
+  # Step 1: Log print to JeevesUI (already done by bambu agent)
+  - agent: bambu
+    action: log_print
+    description: "Log print usage to JeevesUI"
+
+  # Step 2: Send Telegram notification
+  - agent: telegram
+    action: send_notification
+    chat_id: "8241581699"
+    template: |
+      🖨️ Print completed: {{filename}}
+
+      Spool #{{spool_id}}: {{remaining_grams}}g remaining
+
+      ⚠️ Low stock detected!
+
+  # Step 3: Create reminder (conditional - only if below 100g)
+  - agent: telegram
+    action: send_message
+    target: system
+    message:
+      action: create_reminder
+      task: "Order more {{filament_type}} filament ({{filament_color}})"
+      priority: high
+    condition: "{{remaining_grams}} < 100"
+
+  # Step 4: Update shared memory with low stock flag
+  - agent: system
+    action: run_script
+    script: "agents/shared_memory.py"
+    args:
+      - "--set"
+      - "low_stock_spool_{{spool_id}}"
+      - "true"
+      - "--ttl"
+      - "86400"  # 24 hours

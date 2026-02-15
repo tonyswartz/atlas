@@ -27,7 +27,7 @@ SERVICES = {
         "notify_on_start": True,
     },
     "jeevesui": {
-        "check": lambda: check_http("http://localhost:6001"),
+        "check": lambda: check_jeevesui_health(),
         "start": lambda: start_jeevesui(),
         "critical": False,
         "notify_on_start": True,
@@ -71,6 +71,41 @@ def check_http(url: str) -> bool:
         return False  # Connection refused, timeout, etc. = server down
 
 
+def check_jeevesui_health() -> bool:
+    """Check JeevesUI is actually working, not just responding."""
+    try:
+        # Test 1: API endpoint returns valid data
+        req = urllib.request.Request("http://localhost:6001/api/filament/spools", method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+            if not isinstance(data, list):
+                log("⚠️ JeevesUI API returned invalid data")
+                return False
+
+        # Test 2: Check process is running from correct directory (not zombie)
+        try:
+            result = subprocess.run(
+                ["lsof", "-c", "node", "-a", "-d", "cwd"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and "JeevesUI" not in result.stdout:
+                log("⚠️ JeevesUI process running from wrong directory (zombie)")
+                return False
+        except Exception as e:
+            log(f"Could not check process directory: {e}")
+            # Don't fail health check if lsof fails, fall back to API check
+
+        return True
+    except urllib.error.HTTPError as e:
+        log(f"JeevesUI API error: {e.code}")
+        return False
+    except Exception as e:
+        log(f"JeevesUI health check failed: {e}")
+        return False
+
+
 def start_telegram_bot() -> bool:
     """Start Telegram bot via launchctl."""
     try:
@@ -107,29 +142,48 @@ def start_telegram_bot() -> bool:
 
 
 def start_jeevesui() -> bool:
-    """Start JeevesUI server."""
+    """Start JeevesUI server via LaunchAgent."""
     try:
-        # Check if already running
-        if check_http("http://localhost:6001"):
+        # Check if already healthy
+        if check_jeevesui_health():
             return True
 
-        # Start JeevesUI
+        # Kill any zombie processes first
+        try:
+            subprocess.run(
+                ["pkill", "-f", "next start -p 6001"],
+                capture_output=True,
+                timeout=5,
+            )
+            time.sleep(2)
+        except Exception as e:
+            log(f"Could not kill zombie processes: {e}")
+
+        # Start JeevesUI via LaunchAgent
         jeevesui_path = Path("/Users/printer/clawd/JeevesUI")
         if not jeevesui_path.exists():
             log("JeevesUI path not found - skipping auto-start")
             return False
 
-        # Launch in background
-        subprocess.Popen(
-            ["npm", "start"],
-            cwd=jeevesui_path,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        # Use launchctl to start
+        try:
+            subprocess.run(
+                ["launchctl", "start", "com.jeeves-ui"],
+                capture_output=True,
+                timeout=10,
+            )
+        except Exception:
+            # Fallback: start directly
+            subprocess.Popen(
+                ["npm", "start"],
+                cwd=jeevesui_path,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
 
         # Wait and verify
-        time.sleep(5)
-        if check_http("http://localhost:6001"):
+        time.sleep(8)
+        if check_jeevesui_health():
             log("JeevesUI started successfully")
             return True
         else:

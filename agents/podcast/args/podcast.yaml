@@ -1,0 +1,127 @@
+# Podcast Automation Configuration
+
+# LLM Model Configuration (shared with all agents)
+# MiniMax coding plan: 100 prompts/5hrs on $10/month plan
+primary:
+  provider: minimax
+  model: MiniMax-M2.5
+  base_url: https://api.minimax.io/v1
+  api_key_env: MINIMIAX_CODING  # Coding plan API key in envchain
+  max_tokens: 4096
+  temperature: 0.7
+  timeout: 60.0
+
+# Fallback Models (tried in order when primary fails/rate-limited)
+fallbacks:
+  # OpenRouter (auto-select best free model)
+  - provider: openrouter
+    enabled: true
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    model: openrouter/free
+    timeout: 60.0
+
+  # Ollama (local, final fallback)
+  - provider: ollama
+    enabled: true
+    model: qwen2.5:14b
+    base_url: http://localhost:11434/v1
+    timeout: 120.0
+
+podcasts:
+  explore:
+    name: "Explore with Tony"
+    description: "Travel stories and resources"
+    target_length: "3-6 minutes"
+    # RSS feed URL (Spotify/Anchor or Apple); used to sync episode history.
+    rss_url: "https://anchor.fm/s/f9b95a10/podcast/rss"
+    target_words_min: 700
+    target_words_max: 1500
+    tone: "personal, storytelling, inspiring"
+    prompt_day: 1  # Monday
+    prompt_hour: 17  # 5 PM
+    publish_day: "Wednesday"
+    music_bed: "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/bg.mp3"
+    voice_id: "c4QVvAuEWOyBDbiId8sw"
+
+  sololaw:
+    name: "Solo Law Club"
+    description: "Educational frameworks for solo lawyers"
+    target_length: "3-12 minutes"
+    rss_url: "https://anchor.fm/s/fb80e7f0/podcast/rss"
+    target_words_min: 700
+    target_words_max: 2000
+    tone: "conversational, pragmatic, educational"
+    prompt_day: 3  # Wednesday
+    prompt_hour: 17  # 5 PM
+    publish_day: "Monday"
+    music_bed: "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/bg.mp3"
+    voice_id: "c4QVvAuEWOyBDbiId8sw"
+
+  832weekends:
+    name: "832 Weekends"
+    description: "First-person parenting journey"
+    target_length: "3-6 minutes"
+    rss_url: "https://anchor.fm/s/f9b95b3c/podcast/rss"
+    target_words_min: 700
+    target_words_max: 1500
+    tone: "supportive, vulnerable, reflective"
+    prompt_day: 5  # Friday
+    prompt_hour: 17  # 5 PM
+    publish_day: "Friday"
+    music_bed: "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/bg.mp3"
+    voice_id: "c4QVvAuEWOyBDbiId8sw"
+
+# TTS Provider
+tts:
+  provider: "elevenlabs"  # or "deepgram"
+  elevenlabs:
+    model: "eleven_multilingual_v2"  # Previous model - testing for reverb issues
+    stability: 1          # High stability = smoother, more consistent pacing
+    similarity_boost: 0.8   # Match voice clone closely
+    style: 0.7               # Moderate emotion (less dramatic variation)
+    style_exaggeration: 0.7  # Alias for style (same value)
+    use_speaker_boost: false # Disable to eliminate echo/reverb artifacts
+    speed: 1             # Slower for smoother word transitions
+  deepgram:
+    model: "aura-asteria-en"
+    sample_rate: 44100
+
+# Audio Mixing
+audio:
+  voice_format: "mp3"
+  voice_bitrate: "192k"
+  voice_volume: 1.0        # Base voice level (loudness normalization handles final level)
+  music_volume: 0.15       # Music at 15% for more subtle background
+  music_outro_seconds: 5   # Music continues for 5s after voice ends
+  fade_in_seconds: 3
+  fade_out_seconds: 3
+  final_bitrate: "192k"
+  sample_rate: 44100
+  # Loudness normalization (professional podcast standard)
+  loudness_normalize: true
+  target_lufs: -16.0       # Target loudness (Apple Podcasts/NPR standard)
+  target_lra: 7.0          # Loudness range (7-11 is typical for podcasts)
+  target_tp: -1.5          # True peak limit in dB (prevents clipping)
+
+# Paths
+paths:
+  # All episodes live in Obsidian (source of truth); no copy in local repo
+  episodes_dir: "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts"
+  catalog_db: "data/podcast_catalog.db"
+  music_beds_dir: "audio/music_beds"
+  hardprompts_dir: "hardprompts"
+  obsidian_podcasts: "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts"
+
+# Telegram
+telegram:
+  # Podcast group chat ID (negative number for groups)
+  chat_id: "-5152644974"  # Podcast group
+  # Fallback to personal chat if group not configured
+  fallback_chat_id: 8241581699
+  pending_file: "data/podcast_prompts.md"
+
+# Credentials (stored in envchain)
+credentials:
+  elevenlabs_api_key: "ELEVENLABS_API_KEY"
+  deepgram_api_key: "DEEPGRAM_API_KEY"

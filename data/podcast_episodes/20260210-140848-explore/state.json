@@ -1,0 +1,21 @@
+{
+  "episode_id": "20260210-140848-explore",
+  "podcast_name": "explore",
+  "title": "My first solo backpacking trip in Olympic National...",
+  "status": "mixed",
+  "created_at": "2026-02-10T14:08:48.770306",
+  "idea": "My first solo backpacking trip in Olympic National Park - getting lost on the trail, finding the perfect campsite by a glacier-fed lake, and why sometimes the wrong turn leads to the best stories",
+  "script_draft_at": "2026-02-10T14:09:43.059784",
+  "word_count": 935,
+  "character_count": 5420,
+  "estimated_duration_seconds": 374,
+  "script_approved_at": "2026-02-10T14:10:16.565150",
+  "approved": true,
+  "voice_generated_at": "2026-02-10T14:10:25.611225",
+  "voice_file": "/Users/printer/atlas/data/podcast_episodes/20260210-140848-explore/voice_raw.mp3",
+  "actual_duration_seconds": 351,
+  "tts_provider": "elevenlabs",
+  "mixed_at": "2026-02-10T14:10:27.314237",
+  "final_file": "/Users/printer/atlas/data/podcast_episodes/20260210-140848-explore/mixed_final.mp3",
+  "music_bed_used": "audio/music_beds/explore_upbeat.mp3"
+}

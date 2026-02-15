@@ -1,0 +1,60 @@
+# Telegram Bot Configuration
+# Agent-specific settings for conversation management
+
+# Bot behavior
+personality: jeeves
+voice: concise
+max_response_length: 500
+
+# Model selection (fallback chain)
+models:
+  primary: qwen2.5:14b  # Ollama, supports tools, 120s timeout
+  fallback: minimax     # MiniMax-M2.5, reliable, strips <think> tags
+
+# Tool execution
+tool_limits:
+  max_calls_per_tool: 3
+  max_rounds: 10
+  force_text_every_n_rounds: 4
+
+# Timeouts
+timeouts:
+  ollama_seconds: 120
+  telegram_api_seconds: 30
+  tool_execution_seconds: 60
+
+# Session management
+session_file: data/sessions.json
+max_history_messages: 50
+
+# Allowlist (Telegram user IDs with access)
+allowlist:
+  - 8241581699  # Tony
+
+# Paths (for tool_runner.py)
+paths:
+  journal_csv: /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Journals/Journal.csv
+  reminders: /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Tony Reminders.md
+  tony_tasks: /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Tony Tasks.md
+  heartbeat: /Users/printer/atlas/HEARTBEAT.md
+  heartbeat_state: /Users/printer/atlas/data/heartbeat-state.json
+
+# Tool routing
+enabled_tools:
+  - memory_read
+  - memory_write
+  - memory_search
+  - journal_read_recent
+  - reminders_read
+  - reminder_add
+  - reminder_mark_done
+  - kanban_read
+  - legalkanban_search_cases
+  - legalkanban_create_task
+  - heartbeat_read
+  - run_tool
+  - web_search
+  - browser
+  - google_calendar_find_events
+  - google_calendar_create_event
+  - gmail_create_draft

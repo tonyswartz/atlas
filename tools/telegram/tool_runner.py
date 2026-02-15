@@ -12,6 +12,7 @@ import asyncio
 import csv
 import json
 import logging
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -45,18 +46,29 @@ def _resolve_path(key: str, default: Path) -> Path:
         return default
 # Obsidian vault Trials folder (same as commands.VAULT / "Trials")
 TRIALS_ROOT = Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Trials")
+
+# Obsidian vault Rotary folders
+ROTARY_ROOT = Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Rotary")
+ROTARY_LOG = ROTARY_ROOT / "Rotary Log.md"
+ROTARY_TEMPLATE = ROTARY_ROOT / "Templates" / "Agenda Template.md"
+ROTARY_MEETINGS = ROTARY_ROOT / "Meetings"
+
 logger = logging.getLogger(__name__)
 
 USER_FACING_ERROR = "Operation failed. Please try again."
 
+# Test mode: when ATLAS_TEST_RECORD_TOOLS=1, each execute() appends (tool_name, tool_input) here
+TOOL_CALL_RECORD: list[tuple[str, dict]] = []
 
-def _run(args: list, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess:
+
+def _run(args: list, cwd: Path = REPO_ROOT, timeout: int = 60) -> subprocess.CompletedProcess:
     """Run a subprocess with the given args. Returns the CompletedProcess."""
     return subprocess.run(
         args,
         capture_output=True,
         text=True,
-        cwd=cwd
+        cwd=cwd,
+        timeout=timeout
     )
 
 
@@ -106,6 +118,8 @@ def _execute_sync(tool_name: str, tool_input: dict) -> str:
     """
     Synchronous implementation of tool execution.
     """
+    if os.environ.get("ATLAS_TEST_RECORD_TOOLS"):
+        TOOL_CALL_RECORD.append((tool_name, dict(tool_input)))
     try:
         if tool_name == "memory_read":
             return _memory_read(tool_input)
@@ -121,6 +135,8 @@ def _execute_sync(tool_name: str, tool_input: dict) -> str:
             return _journal_read_recent(tool_input)
         elif tool_name == "reminders_read":
             return _reminders_read()
+        elif tool_name == "kanban_read":
+            return _kanban_read()
         elif tool_name == "heartbeat_read":
             return _heartbeat_read()
         elif tool_name == "trial_read_guide":
@@ -133,12 +149,22 @@ def _execute_sync(tool_name: str, tool_input: dict) -> str:
             return _trial_read_template(tool_input)
         elif tool_name == "trial_save_document":
             return _trial_save_document(tool_input)
+        elif tool_name == "rotary_read_log":
+            return _rotary_read_log()
+        elif tool_name == "rotary_read_template":
+            return _rotary_read_template()
+        elif tool_name == "rotary_read_agenda":
+            return _rotary_read_agenda(tool_input)
+        elif tool_name == "rotary_save_agenda":
+            return _rotary_save_agenda(tool_input)
         elif tool_name == "read_file":
             return _read_file(tool_input)
         elif tool_name == "list_files":
             return _list_files(tool_input)
         elif tool_name == "reminder_add":
             return _reminder_add(tool_input)
+        elif tool_name == "reminder_mark_done":
+            return _reminder_mark_done(tool_input)
         elif tool_name == "bambu":
             return _bambu(tool_input)
         elif tool_name == "browser_search":
@@ -155,10 +181,24 @@ def _execute_sync(tool_name: str, tool_input: dict) -> str:
             return _telegram_groups(tool_input)
         elif tool_name == "conversation_context":
             return _conversation_context(tool_input)
-        elif tool_name == "proactive_intelligence":
-            return _proactive_intelligence(tool_input)
-        elif tool_name == "log_correction":
-            return _log_correction(tool_input)
+        elif tool_name == "legalkanban_search_cases":
+            return _legalkanban_search_cases(tool_input)
+        elif tool_name == "legalkanban_create_task":
+            return _legalkanban_create_task(tool_input)
+        elif tool_name == "podcast_create_episode":
+            return _podcast_create_episode(tool_input)
+        elif tool_name == "podcast_approve_script":
+            return _podcast_approve_script(tool_input)
+        elif tool_name == "schedule_read":
+            return _schedule_read(tool_input)
+        elif tool_name == "schedule_preview":
+            return _schedule_preview(tool_input)
+        elif tool_name == "schedule_add":
+            return _schedule_add(tool_input)
+        elif tool_name == "script_writer":
+            return _script_writer(tool_input)
+        elif tool_name == "launchd_manager":
+            return _launchd_manager(tool_input)
         elif tool_name in _ZAPIER_TOOLS:
             return _zapier(tool_name, tool_input)
         else:
@@ -371,6 +411,9 @@ def _journal_read_recent(inp: dict) -> str:
 _DEFAULT_REMINDERS_PATH = Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Tony Reminders.md")
 _REMINDER_SECTIONS = ["[Shopping]", "[Today]", "[Later This Week]", "[Later This Month]", "[Later Later]"]
 
+# Tony Tasks.md (LegalKanban-synced tasks + other task sections)
+_DEFAULT_KANBAN_PATH = Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Tony Tasks.md")
+
 
 def _reminders_read() -> str:
     """Read Tony Reminders.md by section. Read-only; same sections as reminder_add."""
@@ -397,6 +440,21 @@ def _reminders_read() -> str:
     # Drop empty sections for cleaner output
     sections = {k: v for k, v in sections.items() if v}
     return json.dumps({"success": True, "sections": sections}, indent=2)
+
+
+def _kanban_read() -> str:
+    """Read Tony Tasks.md (includes LegalKanban-synced tasks). Read-only."""
+    path = _resolve_path("kanban", _DEFAULT_KANBAN_PATH)
+    if not path.exists():
+        return json.dumps({"success": True, "message": "Tasks file not found.", "content": ""})
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("kanban_read failed: %s", e)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR, "content": ""})
+
+    return json.dumps({"success": True, "content": content.strip()}, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +568,189 @@ def _trial_save_document(inp: dict) -> str:
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
 
+# ---------------------------------------------------------------------------
+# Rotary agenda tools
+# ---------------------------------------------------------------------------
+import re
+from zoneinfo import ZoneInfo
+
+TZ = ZoneInfo("America/Los_Angeles")
+
+
+def _parse_rotary_log(text: str) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    """Return (spotlights, speakers) keyed by 'M/D' date string."""
+    spotlights: dict[str, str] = {}
+    speakers: dict[str, dict[str, str]] = {}
+    current: str | None = None
+
+    for line in text.splitlines():
+        s = line.strip()
+        if s == "## Member Spotlight Schedule":
+            current = "spotlight"
+            continue
+        if s == "## Speaker Schedule":
+            current = "speaker"
+            continue
+        if s.startswith("##"):
+            current = None
+            continue
+
+        if current and s.startswith("- "):
+            m = re.match(r"-\s+(\d+/\d+):\s*(.*)", s)
+            if not m:
+                continue
+            date_key, value = m.group(1), m.group(2).strip()
+            if current == "spotlight":
+                spotlights[date_key] = value
+            else:
+                name, topic = (value.split(" — ", 1) + ["TBD"])[:2]
+                speakers[date_key] = {"name": name.strip(), "topic": topic.strip()}
+
+    return spotlights, speakers
+
+
+def _rotary_read_log() -> str:
+    """Read Rotary Log and return next meeting info."""
+    if not ROTARY_LOG.exists():
+        return json.dumps({"success": False, "error": "Rotary Log.md not found."})
+
+    try:
+        spotlights, speakers = _parse_rotary_log(ROTARY_LOG.read_text())
+        today = datetime.now(TZ).date()
+
+        # Find nearest upcoming (or today) meeting date from the schedule
+        best_date = None
+        best_key: str | None = None
+        for key in spotlights:
+            try:
+                month, day = (int(x) for x in key.split("/"))
+                candidate = today.replace(month=month, day=day)
+                if candidate < today:
+                    candidate = candidate.replace(year=today.year + 1)
+                if best_date is None or candidate < best_date:
+                    best_date = candidate
+                    best_key = key
+            except Exception:
+                continue
+
+        if not best_date or not best_key:
+            return json.dumps({"success": False, "error": "No upcoming meeting dates found in Rotary Log."})
+
+        spotlight = spotlights.get(best_key, "[TBD]")
+        speaker = speakers.get(best_key, {"name": "[TBD]", "topic": "[TBD]"})
+
+        return json.dumps({
+            "success": True,
+            "meeting_date": best_date.strftime("%Y-%m-%d"),
+            "meeting_date_long": best_date.strftime("%A, %B %d, %Y"),
+            "member_spotlight": spotlight,
+            "speaker_name": speaker["name"],
+            "speaker_topic": speaker["topic"]
+        }, indent=2)
+    except Exception as e:
+        logger.warning("rotary_read_log failed: %s", e)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+
+def _rotary_read_template() -> str:
+    """Read the Rotary agenda template."""
+    if not ROTARY_TEMPLATE.exists():
+        return json.dumps({"success": False, "error": "Agenda Template.md not found."})
+    try:
+        return ROTARY_TEMPLATE.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning("rotary_read_template failed: %s", e)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+
+def _rotary_read_agenda(inp: dict) -> str:
+    """Read an existing Rotary agenda by date."""
+    meeting_date_str = (inp.get("meeting_date") or "").strip()
+
+    if not meeting_date_str:
+        return json.dumps({"success": False, "error": "meeting_date required (YYYY-MM-DD)."})
+
+    try:
+        # Parse meeting date
+        meeting_date = datetime.strptime(meeting_date_str, "%Y-%m-%d").date()
+
+        # Look for agenda file
+        agenda_file = ROTARY_MEETINGS / f"{meeting_date.strftime('%Y-%m-%d')} Agenda.md"
+
+        if not agenda_file.exists():
+            return json.dumps({"success": False, "error": f"No agenda found for {meeting_date_str}."})
+
+        content = agenda_file.read_text(encoding="utf-8")
+        return json.dumps({"success": True, "content": content, "date": meeting_date_str})
+    except ValueError:
+        return json.dumps({"success": False, "error": "Invalid meeting_date format. Use YYYY-MM-DD."})
+    except Exception as e:
+        logger.warning("rotary_read_agenda failed: %s", e)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+
+def _rotary_save_agenda(inp: dict) -> str:
+    """Save a completed Rotary agenda with automatic backup and validation."""
+    content = inp.get("content", "")
+    meeting_date_str = (inp.get("meeting_date") or "").strip()
+
+    if not content:
+        return json.dumps({"success": False, "error": "content required."})
+    if not meeting_date_str:
+        return json.dumps({"success": False, "error": "meeting_date required (YYYY-MM-DD)."})
+
+    try:
+        # Parse meeting date
+        meeting_date = datetime.strptime(meeting_date_str, "%Y-%m-%d").date()
+
+        # Prepare output path
+        ROTARY_MEETINGS.mkdir(parents=True, exist_ok=True)
+        out_file = ROTARY_MEETINGS / f"{meeting_date.strftime('%Y-%m-%d')} Agenda.md"
+
+        # SAFEGUARD: Validate content length before overwriting
+        if out_file.exists():
+            existing_content = out_file.read_text(encoding="utf-8")
+            existing_len = len(existing_content)
+            new_len = len(content)
+
+            # Reject if new content is suspiciously short (< 50% of original AND < 500 chars)
+            # This catches accidental overwrites with partial content
+            if new_len < 500 and new_len < (existing_len * 0.5):
+                logger.warning(
+                    "rotary_save_agenda BLOCKED suspicious overwrite: "
+                    f"existing={existing_len} chars, new={new_len} chars (too short)"
+                )
+                return json.dumps({
+                    "success": False,
+                    "error": f"Content too short ({new_len} chars). "
+                            f"Existing agenda is {existing_len} chars. "
+                            f"Use rotary_read_agenda first to get the full content, "
+                            f"then modify and save the complete agenda."
+                })
+
+            # Create timestamped backup before overwriting
+            backup_dir = ROTARY_MEETINGS / "backups"
+            backup_dir.mkdir(exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = backup_dir / f"{meeting_date.strftime('%Y-%m-%d')}_backup_{timestamp}.md"
+            backup_file.write_text(existing_content, encoding="utf-8")
+            logger.info(f"rotary_save_agenda: created backup at {backup_file.name}")
+
+        # Save the new content
+        out_file.write_text(content, encoding="utf-8")
+
+        # Return relative path from Obsidian vault root
+        vault_root = ROTARY_ROOT.parent
+        rel_path = out_file.relative_to(vault_root)
+
+        return json.dumps({"success": True, "path": str(rel_path)})
+    except ValueError:
+        return json.dumps({"success": False, "error": "Invalid meeting_date format. Use YYYY-MM-DD."})
+    except Exception as e:
+        logger.warning("rotary_save_agenda failed: %s", e)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+
 def _bambu(inp: dict) -> str:
     """Query or control Bambu printer via bambu-cli."""
     action = (inp.get("action") or "").strip().lower()
@@ -619,7 +860,13 @@ def _web_search(inp: dict) -> str:
     if not script_path.exists():
         logger.warning("web_search.py not found at %s", script_path)
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
-    args = [sys.executable, str(script_path), "--query", inp["query"]]
+
+    query = inp.get("query", "").strip()
+    if not query:
+        logger.error(f"web_search called without query parameter. Input: {inp}")
+        return json.dumps({"success": False, "error": "Missing query parameter"})
+
+    args = [sys.executable, str(script_path), "--query", query]
     if inp.get("count") is not None:
         args.extend(["--count", str(inp["count"])])
     result = _run(args)
@@ -691,6 +938,88 @@ def _reminder_add(inp: dict) -> str:
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
     msg = result.stdout.strip() or "Reminder added."
     return json.dumps({"success": True, "message": msg})
+
+
+def _reminder_mark_done(inp: dict) -> str:
+    """Mark one or more reminders as done in Tony Reminders.md by matching text (and optional date)."""
+    items = inp.get("items")
+    if isinstance(items, str):
+        items = [s.strip() for s in items.split(",") if s.strip()]
+    if not isinstance(items, list):
+        items = []
+    items = [s.strip() for s in items if isinstance(s, str) and s.strip()]
+    if not items:
+        return json.dumps({"success": False, "error": "items (list of reminder text to mark done) is required.", "marked_count": 0})
+    script = REPO_ROOT / "tools" / "briefings" / "reminder_add.py"
+    if not script.exists():
+        logger.warning("reminder_add.py not found at %s", script)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR, "marked_count": 0})
+    args = [sys.executable, str(script), "--mark-done"] + items
+    result = _run(args, cwd=REPO_ROOT)
+    try:
+        out = (result.stdout or "").strip()
+        data = json.loads(out) if out else {}
+        if not data.get("success"):
+            return json.dumps({"success": False, "error": data.get("message", result.stderr or USER_FACING_ERROR), "marked_count": data.get("marked_count", 0)})
+        return json.dumps({"success": True, "marked_count": data.get("marked_count", 0), "message": data.get("message", "")})
+    except json.JSONDecodeError:
+        return json.dumps({"success": False, "error": result.stderr or USER_FACING_ERROR, "marked_count": 0})
+
+
+def _legalkanban_search_cases(inp: dict) -> str:
+    """Search open LegalKanban cases by name (e.g. last name)."""
+    query = (inp.get("query") or "").strip()
+    if not query:
+        return json.dumps({"success": False, "error": "query is required.", "cases": []})
+    script = REPO_ROOT / "tools" / "legalkanban" / "case_search.py"
+    if not script.exists():
+        logger.warning("case_search.py not found at %s", script)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR, "cases": []})
+    result = _run([sys.executable, str(script), query, "--json"], cwd=REPO_ROOT)
+    try:
+        # Script prints JSON to stdout
+        out = (result.stdout or "").strip()
+        data = json.loads(out) if out else {}
+        if not data.get("success"):
+            return json.dumps({"success": False, "error": data.get("error", USER_FACING_ERROR), "cases": data.get("cases", [])})
+        return json.dumps({"success": True, "cases": data.get("cases", [])}, indent=2)
+    except json.JSONDecodeError as e:
+        logger.warning("legalkanban_search_cases parse failed: %s", e)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR, "cases": []})
+
+
+def _legalkanban_create_task(inp: dict) -> str:
+    """Create a task in LegalKanban (syncs to Tony Tasks.md)."""
+    title = (inp.get("title") or "").strip()
+    if not title:
+        return json.dumps({"success": False, "error": "title is required."})
+    script = REPO_ROOT / "tools" / "legalkanban" / "task_create.py"
+    if not script.exists():
+        logger.warning("task_create.py not found at %s", script)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+    args = [sys.executable, str(script), "--title", title, "--system", "legalkanban", "--json"]
+    if inp.get("case_id") is not None:
+        args.extend(["--case-id", str(int(inp["case_id"]))])
+    if inp.get("priority"):
+        p = (inp.get("priority") or "").strip().lower()
+        if p in ("high", "medium", "low"):
+            args.extend(["--priority", p])
+    if inp.get("due_date"):
+        args.extend(["--due-date", (inp.get("due_date") or "").strip()])
+    if inp.get("description"):
+        args.extend(["--description", (inp.get("description") or "").strip()])
+    result = _run(args, cwd=REPO_ROOT)
+    try:
+        out = (result.stdout or "").strip()
+        data = json.loads(out) if out else {}
+        if result.returncode != 0 or not data.get("success"):
+            return json.dumps({"success": False, "error": data.get("error", result.stderr or USER_FACING_ERROR)})
+        return json.dumps(data, indent=2)
+    except json.JSONDecodeError:
+        if result.returncode != 0:
+            logger.warning("legalkanban_create_task failed: %s", result.stderr)
+            return json.dumps({"success": False, "error": result.stderr or USER_FACING_ERROR})
+        return json.dumps({"success": True, "message": "Task created."})
 
 
 # Allowlisted scripts for run_tool: script_name -> path relative to REPO_ROOT
@@ -955,6 +1284,682 @@ _ZAPIER_TOOLS = {
     "google_calendar_create_detailed_event",
     "google_calendar_move_event_to_another_calendar",
 }
+
+
+def _podcast_create_episode(inp: dict) -> str:
+    """Create a new podcast episode from an idea."""
+    podcast = inp.get("podcast")
+    idea = inp.get("idea")
+
+    if not podcast or not idea:
+        return json.dumps({"success": False, "error": "podcast and idea are required"})
+
+    script = REPO_ROOT / "tools" / "podcast" / "idea_processor.py"
+    if not script.exists():
+        logger.warning("idea_processor.py not found at %s", script)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+    args = [
+        sys.executable,
+        str(script),
+        "--podcast", podcast,
+        "--idea", idea
+    ]
+
+    result = _run(args, cwd=REPO_ROOT)
+
+    if result.returncode != 0:
+        logger.warning("podcast_create_episode failed: %s", result.stderr.strip())
+        return json.dumps({"success": False, "error": "Failed to create episode"})
+
+    # Parse episode ID from stdout
+    output = result.stdout.strip()
+    episode_id = None
+    for line in output.split("\n"):
+        if "Episode created:" in line or "episode_id" in line.lower():
+            # Extract episode ID from output
+            parts = line.split(":")
+            if len(parts) > 1:
+                episode_id = parts[1].strip()
+                break
+
+    return json.dumps({
+        "success": True,
+        "message": "Episode created successfully. Script generation in progress.",
+        "episode_id": episode_id,
+        "output": output
+    })
+
+
+def _podcast_approve_script(inp: dict) -> str:
+    """Approve a podcast script and trigger voice synthesis."""
+    episode_id = inp.get("episode_id")
+    pronunciation_fixes = inp.get("pronunciation_fixes", {})
+
+    if not episode_id:
+        return json.dumps({"success": False, "error": "episode_id is required"})
+
+    # First, copy script_draft.md to script_approved.md
+    config_path = REPO_ROOT / "agents" / "podcast" / "args" / "podcast.yaml"
+    try:
+        import yaml
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+
+        episodes_base = Path(config["paths"]["episodes_dir"])
+
+        # Parse episode_id to get directory
+        if episode_id.count("-") >= 2 and episode_id.split("-")[0].isdigit():
+            episode_dir = episodes_base / episode_id
+        else:
+            parts = episode_id.split("-", 1)
+            podcast_name_short = parts[0]
+            episode_num = parts[1]
+            # Map short name to full name
+            podcast_full_name = None
+            for name, podcast_config in config["podcasts"].items():
+                if name == podcast_name_short:
+                    podcast_full_name = podcast_config["name"]
+                    break
+            if not podcast_full_name:
+                return json.dumps({"success": False, "error": f"Unknown podcast: {podcast_name_short}"})
+            episode_dir = episodes_base / podcast_full_name / episode_num
+
+        draft_path = episode_dir / "script_draft.md"
+        approved_path = episode_dir / "script_approved.md"
+
+        if not draft_path.exists():
+            return json.dumps({"success": False, "error": "Script draft not found"})
+
+        # Copy draft to approved
+        import shutil
+        shutil.copy2(draft_path, approved_path)
+
+        # Store one-off pronunciation fixes in state if provided
+        if pronunciation_fixes:
+            state_path = episode_dir / "state.json"
+            if state_path.exists():
+                with open(state_path) as f:
+                    state = json.load(f)
+                state["pronunciation_fixes"] = pronunciation_fixes
+                with open(state_path, "w") as f:
+                    json.dump(state, f, indent=2)
+
+    except Exception as e:
+        logger.exception("Failed to copy script to approved")
+        return json.dumps({"success": False, "error": f"Failed to prepare script: {str(e)}"})
+
+    # Now trigger TTS synthesis
+    script = REPO_ROOT / "tools" / "podcast" / "tts_synthesizer.py"
+    if not script.exists():
+        logger.warning("tts_synthesizer.py not found at %s", script)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+    args = [
+        sys.executable,
+        str(script),
+        "--episode-id", episode_id
+    ]
+
+    # Run with envchain for API keys
+    envchain_args = ["/opt/homebrew/bin/envchain", "atlas"] + args
+    result = _run(envchain_args, cwd=REPO_ROOT)
+
+    if result.returncode != 0:
+        logger.warning("podcast_approve_script (TTS) failed: %s", result.stderr.strip())
+        return json.dumps({"success": False, "error": "Voice synthesis failed", "output": result.stderr.strip()})
+
+    return json.dumps({
+        "success": True,
+        "message": "Script approved! Voice synthesis and audio mixing complete. Final MP3 sent to Telegram.",
+        "episode_id": episode_id
+    })
+
+
+def _podcast_regenerate_voice(inp: dict) -> str:
+    """Regenerate voice and audio for an existing episode after manual script edits."""
+    episode_id = inp.get("episode_id")
+    pronunciation_fixes = inp.get("pronunciation_fixes", {})
+
+    if not episode_id:
+        return json.dumps({"success": False, "error": "episode_id is required"})
+
+    # Verify episode exists and has approved script
+    config_path = REPO_ROOT / "agents" / "podcast" / "args" / "podcast.yaml"
+    try:
+        import yaml
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+
+        episodes_base = Path(config["paths"]["episodes_dir"])
+
+        # Parse episode_id to get directory
+        if episode_id.count("-") >= 2 and episode_id.split("-")[0].isdigit():
+            episode_dir = episodes_base / episode_id
+        else:
+            parts = episode_id.split("-", 1)
+            podcast_name_short = parts[0]
+            episode_num = parts[1]
+            # Map short name to full name
+            podcast_full_name = None
+            for name, podcast_config in config["podcasts"].items():
+                if name == podcast_name_short:
+                    podcast_full_name = podcast_config["name"]
+                    break
+            if not podcast_full_name:
+                return json.dumps({"success": False, "error": f"Unknown podcast: {podcast_name_short}"})
+            episode_dir = episodes_base / podcast_full_name / episode_num
+
+        approved_path = episode_dir / "script_approved.md"
+
+        if not approved_path.exists():
+            return json.dumps({"success": False, "error": "No approved script found. Edit the script in Obsidian first."})
+
+        # Store one-off pronunciation fixes in state if provided
+        if pronunciation_fixes:
+            state_path = episode_dir / "state.json"
+            if state_path.exists():
+                with open(state_path) as f:
+                    state = json.load(f)
+                state["pronunciation_fixes"] = pronunciation_fixes
+                with open(state_path, "w") as f:
+                    json.dump(state, f, indent=2)
+
+    except Exception as e:
+        logger.exception("Failed to verify episode")
+        return json.dumps({"success": False, "error": f"Failed to verify episode: {str(e)}"})
+
+    # Trigger TTS synthesis
+    script = REPO_ROOT / "tools" / "podcast" / "tts_synthesizer.py"
+    if not script.exists():
+        logger.warning("tts_synthesizer.py not found at %s", script)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+    args = [
+        sys.executable,
+        str(script),
+        "--episode-id", episode_id
+    ]
+
+    # Run with envchain for API keys
+    envchain_args = ["/opt/homebrew/bin/envchain", "atlas"] + args
+    result = _run(envchain_args, cwd=REPO_ROOT)
+
+    if result.returncode != 0:
+        logger.warning("podcast_regenerate_voice (TTS) failed: %s", result.stderr.strip())
+        return json.dumps({"success": False, "error": "Voice synthesis failed", "output": result.stderr.strip()})
+
+    return json.dumps({
+        "success": True,
+        "message": "Voice regenerated! Audio mixing complete. Updated MP3 sent to Telegram.",
+        "episode_id": episode_id
+    })
+
+
+def _podcast_regenerate_paragraph(inp: dict) -> str:
+    """Regenerate a specific paragraph of an episode after manual edits."""
+    episode_id = inp.get("episode_id")
+    paragraph_number = inp.get("paragraph_number")
+    search_term = inp.get("search_term")
+    pronunciation_fixes = inp.get("pronunciation_fixes", {})
+
+    if not episode_id:
+        return json.dumps({"success": False, "error": "episode_id is required"})
+
+    if paragraph_number is None and not search_term:
+        return json.dumps({"success": False, "error": "Either paragraph_number or search_term is required"})
+
+    # Load episode and find paragraph
+    config_path = REPO_ROOT / "agents" / "podcast" / "args" / "podcast.yaml"
+    try:
+        import yaml
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+
+        episodes_base = Path(config["paths"]["episodes_dir"])
+
+        # Parse episode_id to get directory
+        if episode_id.count("-") >= 2 and episode_id.split("-")[0].isdigit():
+            episode_dir = episodes_base / episode_id
+        else:
+            parts = episode_id.split("-", 1)
+            podcast_name_short = parts[0]
+            episode_num = parts[1]
+            # Map short name to full name
+            podcast_full_name = None
+            for name, podcast_config in config["podcasts"].items():
+                if name == podcast_name_short:
+                    podcast_full_name = podcast_config["name"]
+                    break
+            if not podcast_full_name:
+                return json.dumps({"success": False, "error": f"Unknown podcast: {podcast_name_short}"})
+            episode_dir = episodes_base / podcast_full_name / episode_num
+
+        paragraphs_dir = episode_dir / "paragraphs"
+        metadata_file = paragraphs_dir / "paragraph_metadata.json"
+
+        if not metadata_file.exists():
+            return json.dumps({"success": False, "error": "No paragraph metadata found. Episode may not use paragraph-based synthesis."})
+
+        with open(metadata_file) as f:
+            metadata = json.load(f)
+
+        # Find paragraph to regenerate
+        target_paragraph = None
+
+        if paragraph_number is not None:
+            # Find by number
+            for para in metadata["paragraphs"]:
+                if para["number"] == paragraph_number:
+                    target_paragraph = para
+                    break
+        elif search_term:
+            # Find by search term in script
+            script_path = episode_dir / "script_approved.md"
+            if not script_path.exists():
+                return json.dumps({"success": False, "error": "Script not found"})
+
+            # Load and process script
+            from tools.podcast.tts_synthesizer import strip_script_metadata
+            script_text = script_path.read_text(encoding="utf-8")
+            script_text = strip_script_metadata(script_text)
+
+            # Apply pronunciation fixes to get the actual text
+            from tools.podcast.pronunciation import load_pronunciation_dict, apply_pronunciation_fixes
+            pron_dict = load_pronunciation_dict()
+            state_path = episode_dir / "state.json"
+            one_off_fixes = {}
+            if state_path.exists():
+                with open(state_path) as f:
+                    state = json.load(f)
+                    one_off_fixes = state.get("pronunciation_fixes", {})
+
+            script_text, _ = apply_pronunciation_fixes(script_text, pron_dict, one_off_fixes)
+
+            # Split into paragraphs and search
+            paragraphs_text = script_text.split('\n\n')
+            for i, para_text in enumerate(paragraphs_text):
+                if search_term.lower() in para_text.lower():
+                    # Find matching paragraph in metadata
+                    for para in metadata["paragraphs"]:
+                        if para["number"] == i:
+                            target_paragraph = para
+                            break
+                    break
+
+        if not target_paragraph:
+            return json.dumps({"success": False, "error": f"Paragraph not found (number={paragraph_number}, search='{search_term}')"})
+
+        # Store one-off pronunciation fixes if provided
+        if pronunciation_fixes:
+            state_path = episode_dir / "state.json"
+            if state_path.exists():
+                with open(state_path) as f:
+                    state = json.load(f)
+                state["pronunciation_fixes"] = pronunciation_fixes
+                with open(state_path, "w") as f:
+                    json.dump(state, f, indent=2)
+
+    except Exception as e:
+        logger.exception("Failed to load paragraph metadata")
+        return json.dumps({"success": False, "error": f"Failed to load metadata: {str(e)}"})
+
+    # Trigger paragraph regeneration via tts_synthesizer
+    script = REPO_ROOT / "tools" / "podcast" / "regenerate_paragraph.py"
+    if not script.exists():
+        # For now, use tts_synthesizer with special flag (we'll create dedicated script later)
+        logger.warning("regenerate_paragraph.py not found, using full regeneration")
+        return _podcast_regenerate_voice({"episode_id": episode_id, "pronunciation_fixes": pronunciation_fixes})
+
+    args = [
+        sys.executable,
+        str(script),
+        "--episode-id", episode_id,
+        "--paragraph-number", str(target_paragraph["number"])
+    ]
+
+    # Run with envchain for API keys
+    envchain_args = ["/opt/homebrew/bin/envchain", "atlas"] + args
+    result = _run(envchain_args, cwd=REPO_ROOT)
+
+    if result.returncode != 0:
+        logger.warning("podcast_regenerate_paragraph failed: %s", result.stderr.strip())
+        return json.dumps({"success": False, "error": "Paragraph regeneration failed", "output": result.stderr.strip()})
+
+    return json.dumps({
+        "success": True,
+        "message": f"Paragraph {target_paragraph['number']} regenerated! Audio remixed and sent to Telegram.",
+        "episode_id": episode_id,
+        "paragraph_number": target_paragraph["number"]
+    })
+
+
+def _schedule_read(inp: dict) -> str:
+    """Read the podcast schedule for a given podcast."""
+    from datetime import datetime
+    from pathlib import Path
+
+    podcast_id = inp.get("podcast_id")
+    if not podcast_id:
+        return json.dumps({"success": False, "error": "podcast_id required"})
+
+    podcast_configs = {
+        "sololaw": Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/Solo Law Club"),
+        "832weekends": Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/832 Weekends"),
+        "explore": Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/Explore with Tony")
+    }
+
+    if podcast_id not in podcast_configs:
+        return json.dumps({"success": False, "error": f"Unknown podcast: {podcast_id}"})
+
+    schedule_file = podcast_configs[podcast_id] / "Schedule.md"
+    if not schedule_file.exists():
+        return json.dumps({"success": False, "error": f"No schedule found for {podcast_id}"})
+
+    content = schedule_file.read_text()
+    return json.dumps({
+        "success": True,
+        "podcast_id": podcast_id,
+        "content": content,
+        "message": f"Schedule for {podcast_id} loaded successfully"
+    })
+
+
+def _schedule_preview(inp: dict) -> str:
+    """Preview what the schedule will look like with proposed episodes."""
+    from datetime import datetime
+
+    podcast_id = inp.get("podcast_id")
+    episodes = inp.get("episodes", [])
+
+    if not podcast_id or not episodes:
+        return json.dumps({"success": False, "error": "podcast_id and episodes required"})
+
+    # Format episodes based on podcast type
+    preview_lines = []
+
+    for ep in episodes:
+        date_str = ep.get("date", "")
+        try:
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            formatted_date = date_obj.strftime("%B %d, %Y")
+            friday_date = f"Friday, {formatted_date}"
+        except:
+            formatted_date = date_str
+            friday_date = date_str
+
+        title = ep.get("title", "Untitled")
+        theme = ep.get("theme")
+        key_points = ep.get("key_points", [])
+        show_notes = ep.get("show_notes", "")
+
+        if podcast_id == "sololaw":
+            preview_lines.append(f"## {friday_date}\n")
+            preview_lines.append(f"### {title}\n")
+            preview_lines.append("#### Key Discussion Points\n")
+            for point in key_points:
+                preview_lines.append(f"-   {point}")
+            preview_lines.append("\n#### Show Notes\n")
+            preview_lines.append(f"{show_notes}\n")
+            preview_lines.append("\n" + "-" * 72 + "\n")
+
+        elif podcast_id == "832weekends":
+            preview_lines.append(f"## {formatted_date} — {title}")
+            if theme:
+                preview_lines.append(f"**Theme:** {theme}")
+            preview_lines.append("**Key Discussion Points:**")
+            for point in key_points:
+                preview_lines.append(f"- {point}")
+            preview_lines.append("**Show Notes:**")
+            preview_lines.append(f"{show_notes}\n")
+
+        elif podcast_id == "explore":
+            preview_lines.append(f"### {friday_date}")
+            preview_lines.append(f"## Episode: {title}\n")
+            preview_lines.append("### Key Discussion Points")
+            for point in key_points:
+                preview_lines.append(f"- {point}")
+            preview_lines.append("\n### Show Notes")
+            preview_lines.append(f"{show_notes}\n")
+            preview_lines.append("---\n")
+
+    preview = "\n".join(preview_lines)
+
+    return json.dumps({
+        "success": True,
+        "podcast_id": podcast_id,
+        "episode_count": len(episodes),
+        "preview": preview,
+        "message": f"Preview of {len(episodes)} episodes for {podcast_id}"
+    })
+
+
+def _schedule_add(inp: dict) -> str:
+    """Add episodes to the podcast schedule."""
+    from datetime import datetime
+    from pathlib import Path
+
+    podcast_id = inp.get("podcast_id")
+    episodes = inp.get("episodes", [])
+
+    if not podcast_id or not episodes:
+        return json.dumps({"success": False, "error": "podcast_id and episodes required"})
+
+    podcast_configs = {
+        "sololaw": Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/Solo Law Club"),
+        "832weekends": Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/832 Weekends"),
+        "explore": Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/Explore with Tony")
+    }
+
+    if podcast_id not in podcast_configs:
+        return json.dumps({"success": False, "error": f"Unknown podcast: {podcast_id}"})
+
+    schedule_file = podcast_configs[podcast_id] / "Schedule.md"
+
+    # Read existing content (or create header if file doesn't exist)
+    if schedule_file.exists():
+        existing_content = schedule_file.read_text()
+        # Remove trailing newlines
+        existing_content = existing_content.rstrip()
+    else:
+        if podcast_id == "sololaw":
+            existing_content = "# Solo Law Club -- 12 Week Roadmap\n\nPublishing Day: Fridays"
+        elif podcast_id == "832weekends":
+            existing_content = "# 12-Week Podcast Schedule: Eight Hundred and Thirty-Two Weekends"
+        elif podcast_id == "explore":
+            existing_content = "# Explore with Tony – 12 Week Content Plan\n\n---"
+
+    # Format new episodes
+    new_lines = []
+
+    for ep in episodes:
+        date_str = ep.get("date", "")
+        try:
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            formatted_date = date_obj.strftime("%B %d, %Y")
+            friday_date = f"Friday, {formatted_date}"
+        except:
+            formatted_date = date_str
+            friday_date = date_str
+
+        title = ep.get("title", "Untitled")
+        theme = ep.get("theme")
+        key_points = ep.get("key_points", [])
+        show_notes = ep.get("show_notes", "")
+
+        if podcast_id == "sololaw":
+            new_lines.append(f"\n## {friday_date}\n")
+            new_lines.append(f"### {title}\n")
+            new_lines.append("#### Key Discussion Points\n")
+            for point in key_points:
+                new_lines.append(f"-   {point}")
+            new_lines.append("\n#### Show Notes\n")
+            new_lines.append(f"{show_notes}\n")
+            new_lines.append("\n" + "-" * 72 + "\n")
+
+        elif podcast_id == "832weekends":
+            new_lines.append(f"\n## {formatted_date} — {title}")
+            if theme:
+                new_lines.append(f"**Theme:** {theme}")
+            new_lines.append("**Key Discussion Points:**")
+            for point in key_points:
+                new_lines.append(f"- {point}")
+            new_lines.append("**Show Notes:**")
+            new_lines.append(f"{show_notes}\n")
+
+        elif podcast_id == "explore":
+            new_lines.append(f"\n### {friday_date}")
+            new_lines.append(f"## Episode: {title}\n")
+            new_lines.append("### Key Discussion Points")
+            for point in key_points:
+                new_lines.append(f"- {point}")
+            new_lines.append("\n### Show Notes")
+            new_lines.append(f"{show_notes}\n")
+            new_lines.append("---\n")
+
+    # Append to existing content
+    updated_content = existing_content + "\n" + "\n".join(new_lines)
+
+    # Write back
+    schedule_file.write_text(updated_content)
+
+    return json.dumps({
+        "success": True,
+        "podcast_id": podcast_id,
+        "episode_count": len(episodes),
+        "file": str(schedule_file),
+        "message": f"Added {len(episodes)} episodes to {podcast_id} schedule!"
+    })
+
+
+def _script_writer(inp: dict) -> str:
+    """Generate, save, or validate Python scripts."""
+    script_path = REPO_ROOT / "tools" / "system" / "script_writer.py"
+    if not script_path.exists():
+        logger.warning("script_writer.py not found at %s", script_path)
+        return json.dumps({"status": "error", "message": "Script writer tool not found"})
+
+    action = inp.get("action")
+    if not action:
+        return json.dumps({"status": "error", "message": "action parameter required"})
+
+    args = [sys.executable, str(script_path), action]
+
+    if action == "generate":
+        description = inp.get("description", "")
+        if not description:
+            return json.dumps({"status": "error", "message": "description required for generate action"})
+
+        args.append(description)
+
+        # Add optional imports
+        imports = inp.get("imports", [])
+        if imports:
+            args.extend(["--imports", ",".join(imports)])
+
+        # Add envchain flag if needed
+        if inp.get("use_envchain", False):
+            args.append("--envchain")
+
+    elif action == "save":
+        filename = inp.get("filename")
+        code = inp.get("code")
+
+        if not filename or not code:
+            return json.dumps({"status": "error", "message": "filename and code required for save action"})
+
+        args.extend([filename, code])
+
+    elif action == "validate":
+        code = inp.get("code")
+        if not code:
+            return json.dumps({"status": "error", "message": "code required for validate action"})
+
+        args.append(code)
+
+    else:
+        return json.dumps({"status": "error", "message": f"Unknown action: {action}"})
+
+    result = _run(args)
+    out = (result.stdout or "").strip()
+    err = (result.stderr or "").strip()
+
+    if result.returncode != 0:
+        logger.warning("script_writer %s failed (exit %s): %s", action, result.returncode, err)
+        try:
+            # Try to parse error from stdout
+            error_data = json.loads(out)
+            return json.dumps(error_data)
+        except:
+            return json.dumps({"status": "error", "message": f"Script writer failed: {err or 'unknown error'}"})
+
+    return out or "{}"
+
+
+def _launchd_manager(inp: dict) -> str:
+    """Create, load, unload, or list launchd jobs."""
+    manager_path = REPO_ROOT / "tools" / "system" / "launchd_manager.py"
+    if not manager_path.exists():
+        logger.warning("launchd_manager.py not found at %s", manager_path)
+        return json.dumps({"status": "error", "message": "Launchd manager tool not found"})
+
+    action = inp.get("action")
+    if not action:
+        return json.dumps({"status": "error", "message": "action parameter required"})
+
+    args = [sys.executable, str(manager_path), action]
+
+    if action == "create":
+        script_path = inp.get("script_path")
+        label = inp.get("label")
+
+        if not script_path or not label:
+            return json.dumps({"status": "error", "message": "script_path and label required for create action"})
+
+        args.extend(["--script", script_path, "--label", label])
+
+        # Add optional schedule
+        schedule = inp.get("schedule")
+        if schedule:
+            args.extend(["--schedule", schedule])
+
+        # Add optional description
+        description = inp.get("description", "")
+        if description:
+            args.extend(["--description", description])
+
+        # Add run-at-load flag
+        if inp.get("run_at_load", False):
+            args.append("--run-at-load")
+
+    elif action in ["load", "unload"]:
+        label = inp.get("label")
+        if not label:
+            return json.dumps({"status": "error", "message": f"label required for {action} action"})
+
+        args.append(label)
+
+    elif action == "list":
+        # No additional args needed
+        pass
+
+    else:
+        return json.dumps({"status": "error", "message": f"Unknown action: {action}"})
+
+    result = _run(args)
+    out = (result.stdout or "").strip()
+    err = (result.stderr or "").strip()
+
+    if result.returncode != 0:
+        logger.warning("launchd_manager %s failed (exit %s): %s", action, result.returncode, err)
+        try:
+            # Try to parse error from stdout
+            error_data = json.loads(out)
+            return json.dumps(error_data)
+        except:
+            return json.dumps({"status": "error", "message": f"Launchd manager failed: {err or 'unknown error'}"})
+
+    return out or "{}"
 
 
 def _zapier(tool_name: str, inp: dict) -> str:

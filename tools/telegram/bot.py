@@ -24,7 +24,7 @@ from telegram.constants import ChatAction
 
 from config import load_config
 from conversation import handle_message, reset_session, handle_models_command
-from commands import route as route_command, get_trial_prep_message, get_code_directive, trigger_restart, can_restart
+from commands import route as route_command, get_trial_prep_message, get_code_directive, get_rotary_directive, get_schedule_directive, get_episode_directive, get_build_directive, trigger_restart, can_restart
 from group_manager import register_chat
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -55,6 +55,190 @@ async def show_typing(chat, interval: int = 4):
             pass
 
 
+async def _handle_podcast_reply(update: Update, reply_to_msg_id: int, text: str) -> bool:
+    """
+    Smart conversational handler for podcast-related replies.
+    Handles: episode ideas, approvals, regeneration requests, and more.
+    Returns True if handled, False otherwise.
+    """
+    import json
+    from tools.podcast.pronunciation import parse_one_off_fixes
+    from tools.telegram.tool_runner import execute
+
+    prompts_file = Path("/Users/printer/atlas/data/podcast_prompts.json")
+    try:
+        with open(prompts_file) as f:
+            prompts_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+
+    text_lower = text.lower().strip()
+
+    # Keywords for different actions
+    approval_keywords = ["approved", "approve", "looks good", "lgtm", "go ahead", "yes", "proceed"]
+    regenerate_keywords = ["regenerate", "redo", "create new", "make new", "i edited", "edited the script",
+                          "new version", "re-generate", "re-synthesize", "resynthesize"]
+
+    # 1. Check if replying to a podcast prompt (episode idea)
+    if str(reply_to_msg_id) in prompts_data.get("prompts", {}):
+        prompt_info = prompts_data["prompts"][str(reply_to_msg_id)]
+        podcast = prompt_info["podcast"]
+
+        logger.info(f"Detected reply to {podcast} podcast prompt - creating episode")
+
+        result_json = execute("podcast_create_episode", {"podcast": podcast, "idea": text})
+        result = json.loads(result_json)
+
+        if result.get("success"):
+            await update.message.reply_text(
+                f"✅ Creating {podcast} episode...\n\nScript generation in progress. You'll get a preview shortly.",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ Failed to create episode: {result.get('error', 'Unknown error')}",
+                parse_mode="Markdown"
+            )
+
+        return True
+
+    # 2. Check if replying to a script preview or final audio (approval or regeneration)
+    episode_id = None
+
+    # Check script previews
+    if str(reply_to_msg_id) in prompts_data.get("script_previews", {}):
+        episode_id = prompts_data["script_previews"][str(reply_to_msg_id)]["episode_id"]
+
+    # Check final audio messages
+    elif str(reply_to_msg_id) in prompts_data.get("final_audio", {}):
+        episode_id = prompts_data["final_audio"][str(reply_to_msg_id)]["episode_id"]
+
+    if episode_id:
+        # Detect if this is a paragraph-specific regeneration
+        is_paragraph_request = "paragraph" in text_lower or "part about" in text_lower
+
+        # Detect if this is a regeneration request
+        is_regenerate = any(keyword in text_lower for keyword in regenerate_keywords)
+        is_approval = any(keyword in text_lower for keyword in approval_keywords)
+
+        # Parse pronunciation fixes
+        one_off_fixes = parse_one_off_fixes(text)
+
+        if is_paragraph_request and is_regenerate:
+            logger.info(f"Detected paragraph regeneration request for episode {episode_id}")
+
+            # Try to extract paragraph number
+            import re
+            para_number_match = re.search(r'paragraph\s+(\d+)', text_lower)
+            search_term_match = re.search(r'(?:part about|paragraph about|section about)\s+([^,\.]+)', text_lower, re.IGNORECASE)
+
+            tool_input = {"episode_id": episode_id}
+
+            if para_number_match:
+                tool_input["paragraph_number"] = int(para_number_match.group(1))
+                logger.info(f"  Paragraph number: {tool_input['paragraph_number']}")
+            elif search_term_match:
+                tool_input["search_term"] = search_term_match.group(1).strip()
+                logger.info(f"  Search term: {tool_input['search_term']}")
+            else:
+                # Try to extract any quoted or capitalized term
+                potential_terms = re.findall(r'"([^"]+)"', text)
+                if potential_terms:
+                    tool_input["search_term"] = potential_terms[0]
+
+            if one_off_fixes:
+                tool_input["pronunciation_fixes"] = one_off_fixes
+
+            result_json = execute("podcast_regenerate_paragraph", tool_input)
+            result = json.loads(result_json)
+
+            if result.get("success"):
+                para_info = f" paragraph {result.get('paragraph_number', '?')}" if result.get('paragraph_number') is not None else ""
+                await update.message.reply_text(
+                    f"🔄 Regenerating{para_info} of {episode_id}...\n\nProcessing just that section.",
+                    parse_mode="Markdown"
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ Failed to regenerate paragraph: {result.get('error', 'Unknown error')}",
+                    parse_mode="Markdown"
+                )
+
+            return True
+
+        if is_regenerate:
+            logger.info(f"Detected regeneration request for episode {episode_id}")
+
+            tool_input = {"episode_id": episode_id}
+            if one_off_fixes:
+                tool_input["pronunciation_fixes"] = one_off_fixes
+
+            result_json = execute("podcast_regenerate_voice", tool_input)
+            result = json.loads(result_json)
+
+            if result.get("success"):
+                await update.message.reply_text(
+                    f"🔄 Regenerating {episode_id}...\n\nReading your edited script and creating new audio.",
+                    parse_mode="Markdown"
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ Failed to regenerate: {result.get('error', 'Unknown error')}",
+                    parse_mode="Markdown"
+                )
+
+            return True
+
+        elif is_approval:
+            logger.info(f"Detected approval for episode {episode_id}")
+
+            tool_input = {"episode_id": episode_id}
+            if one_off_fixes:
+                tool_input["pronunciation_fixes"] = one_off_fixes
+
+            result_json = execute("podcast_approve_script", tool_input)
+            result = json.loads(result_json)
+
+            if result.get("success"):
+                await update.message.reply_text(
+                    f"🎙️ {episode_id} approved!\n\nGenerating voice and mixing audio...",
+                    parse_mode="Markdown"
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ Failed to process approval: {result.get('error', 'Unknown error')}",
+                    parse_mode="Markdown"
+                )
+
+            return True
+
+    return False
+
+
+async def _keep_typing(chat, stop_event):
+    """Keep sending typing indicator every 4 seconds until stop_event is set."""
+    try:
+        while not stop_event.is_set():
+            await chat.send_action(ChatAction.TYPING)
+            await asyncio.sleep(4)
+    except Exception:
+        pass  # Ignore errors (e.g., if chat closes)
+
+
+def _escape_markdown(text: str) -> str:
+    """Prepare reply for Telegram parse_mode=Markdown: allow bold/italic, but prevent '[date]' or '[LK-511]'
+    from being parsed as links (which causes 'Can't parse entities'). Escapes \\ and [; normalizes ** to *."""
+    if not text:
+        return text
+    # Backslash first so we don't double-escape
+    text = text.replace("\\", "\\\\")
+    # Telegram uses single * for bold; model often outputs **. Normalize so **bold** -> *bold*
+    text = text.replace("**", "*")
+    # Escape [ so [26-02-03] and [LK-511] don't start a link (Telegram expects [text](url))
+    text = text.replace("[", "\\[")
+    return text
+
+
 async def _post_init(application) -> None:
     """Send a short 'Connected' message so /restart has visible confirmation."""
     config = load_config()
@@ -81,7 +265,7 @@ async def on_message(update: Update, context) -> None:
     # --- Allowlist check ---
     allowed = config.get("bot", {}).get("allowed_user_ids", [])
     if allowed and user_id not in allowed:
-        await update.message.reply_text("Sorry, you're not on the access list.")
+        await update.message.reply_text("Sorry, you're not on the access list.", parse_mode="Markdown")
         return
 
     # --- Group autodetection ---
@@ -93,12 +277,26 @@ async def on_message(update: Update, context) -> None:
 
     logger.info(f"Message from user {user_id} ({user.first_name}) in {chat.type} ({chat.title or 'private'}): {update.message.text[:80]}")
 
-    # --- Side-channel: persist raw message for bambu reply handler polling ---
-    Path("/Users/printer/atlas/memory/last_incoming_message.txt").write_text(
-        update.message.text, encoding="utf-8"
-    )
+    # --- Group-specific message files for handlers ---
+    # Each group can have its own last_message file for specialized handlers
+    if chat.type in ("group", "supergroup"):
+        group_file = Path(f"/Users/printer/atlas/memory/group_{chat.id}_last_message.txt")
+        group_file.write_text(update.message.text, encoding="utf-8")
 
-    # --- Substitute /trial or /code with a directive for the LLM ---
+        # Bambu group: bot stays silent (reply handler processes messages)
+        if chat.id == -5286539940:
+            logger.info("Bambu group message - staying silent, reply handler will process")
+            return
+
+    # --- Podcast reply detection ---
+    # Check if this message is a reply to a podcast prompt or script preview
+    if update.message.reply_to_message:
+        reply_to_msg_id = update.message.reply_to_message.message_id
+        podcast_handled = await _handle_podcast_reply(update, reply_to_msg_id, update.message.text)
+        if podcast_handled:
+            return
+
+    # --- Substitute special commands with directives for the LLM ---
     text = update.message.text
     trial_directive = get_trial_prep_message(text)
     if trial_directive is not None:
@@ -107,52 +305,79 @@ async def on_message(update: Update, context) -> None:
         code_directive = get_code_directive(text)
         if code_directive is not None:
             text = code_directive
-
-    # --- Handle /reset and /new (clear session, fresh context on next message) ---
-    if update.message.text.strip().lower() in ("/reset", "/clear", "/new"):
-        reset_session(user_id)
-        await update.message.reply_text("Fresh start. Context reloads next message.")
-        return
-
-    # --- /restart (allowlisted users only; restarts via LaunchAgent) ---
-    if update.message.text.strip().lower() == "/restart":
-        allowed = config.get("bot", {}).get("allowed_user_ids", [])
-        if not can_restart(user_id, allowed):
-            await update.message.reply_text("You're not allowed to restart the bot.")
-            return
-        reply = trigger_restart()
-        await update.message.reply_text(reply)
-        return
-
-    # --- /models: list or switch session model (ollama / minimax) ---
-    if text.strip().lower().startswith("/models"):
-        reply = handle_models_command(user_id, text)
-        await update.message.reply_text(reply)
-        return
-
-    # --- Slash-command interception (before LLM) ---
-    command_reply = route_command(text)
-    if command_reply is not None:
-        await update.message.reply_text(command_reply)
-        return
-
-    # --- Quick signal for known-slow operations (bambu fetches via FTPS) ---
-    _lower = text.strip().lower()
-    if any(w in _lower for w in ("bambu", "printer", "printing", "ams", "filament", "tray")):
-        await update.message.reply_text("checking the printer…")
-
-    # --- Process message via LLM ---
-    try:
-        if config.get("bot", {}).get("typing_indicator", True):
-            async with show_typing(update.message.chat):
-                reply = await handle_message(text, user_id)
         else:
-            reply = await handle_message(text, user_id)
+            rotary_directive = get_rotary_directive(text)
+            if rotary_directive is not None:
+                text = rotary_directive
+            else:
+                schedule_directive = get_schedule_directive(text)
+                if schedule_directive is not None:
+                    text = schedule_directive
+                else:
+                    build_directive = get_build_directive(text)
+                    if build_directive is not None:
+                        text = build_directive
+                    else:
+                        episode_directive = get_episode_directive(text)
+                        if episode_directive is not None:
+                            text = episode_directive
 
-        await update.message.reply_text(reply)
+    # --- Start continuous typing indicator ---
+    typing_enabled = config.get("bot", {}).get("typing_indicator", True)
+    stop_typing = asyncio.Event()
+    typing_task = None
+
+    if typing_enabled:
+        typing_task = asyncio.create_task(_keep_typing(update.message.chat, stop_typing))
+
+    try:
+        # --- Handle /reset and /new (clear session, fresh context on next message) ---
+        if update.message.text.strip().lower() in ("/reset", "/clear", "/new"):
+            reset_session(user_id)
+            await update.message.reply_text("Fresh start. Context reloads next message.", parse_mode="Markdown")
+            return
+
+        # --- /restart (allowlisted users only; restarts via LaunchAgent) ---
+        if update.message.text.strip().lower() == "/restart":
+            allowed = config.get("bot", {}).get("allowed_user_ids", [])
+            if not can_restart(user_id, allowed):
+                await update.message.reply_text("You're not allowed to restart the bot.", parse_mode="Markdown")
+                return
+            reply = trigger_restart()
+            await update.message.reply_text(_escape_markdown(reply), parse_mode="Markdown")
+            return
+
+        # --- /models: list or switch session model (ollama / minimax) ---
+        if text.strip().lower().startswith("/models"):
+            reply = handle_models_command(user_id, text)
+            await update.message.reply_text(_escape_markdown(reply), parse_mode="Markdown")
+            return
+
+        # --- Slash-command interception (before LLM) ---
+        command_reply = route_command(text)
+        if command_reply is not None:
+            await update.message.reply_text(_escape_markdown(command_reply), parse_mode="Markdown")
+            return
+
+        # --- Quick signal for known-slow operations (bambu fetches via FTPS) ---
+        _lower = text.strip().lower()
+        if any(w in _lower for w in ("bambu", "printer", "printing", "ams", "filament", "tray")):
+            await update.message.reply_text("checking the printer…", parse_mode="Markdown")
+
+        # --- Process message via LLM ---
+        reply = await handle_message(text, user_id)
+        await update.message.reply_text(_escape_markdown(reply), parse_mode="Markdown")
     except Exception as e:
         logger.exception("Error handling message")
-        await update.message.reply_text(f"I ran into a problem processing that: {e}")
+        await update.message.reply_text(_escape_markdown(f"Couldn't do that: {e}"), parse_mode="Markdown")
+    finally:
+        # Stop typing indicator
+        if typing_task:
+            stop_typing.set()
+            try:
+                await asyncio.wait_for(typing_task, timeout=1.0)
+            except asyncio.TimeoutError:
+                typing_task.cancel()
 
 
 def main():
@@ -170,7 +395,10 @@ def main():
         sys.exit(1)
 
     print("Starting Telegram bot... (Ctrl+C to stop)")
-    app = Application.builder().token(token).post_init(_post_init).build()
+    from telegram.request import HTTPXRequest
+    # Increase timeouts: connect=30s, read=30s, write=30s, pool=30s
+    request = HTTPXRequest(connection_pool_size=8, connect_timeout=30.0, read_timeout=30.0, write_timeout=30.0, pool_timeout=30.0)
+    app = Application.builder().token(token).request(request).post_init(_post_init).build()
 
     # Handle all text messages (including /reset, /clear)
     app.add_handler(MessageHandler(filters.TEXT, on_message))

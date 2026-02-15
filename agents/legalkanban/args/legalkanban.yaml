@@ -1,0 +1,62 @@
+# LegalKanban Task Sync Configuration
+# Agent-specific settings
+
+# Sync schedule
+sync:
+  schedule: "0 * * * *"  # Every hour at :00
+  launchd_plist: ~/Library/LaunchAgents/com.atlas.legalkanban-sync.plist
+
+# Database connection
+database:
+  # URL stored in envchain under 'atlas' namespace key 'LEGALKANBAN'
+  # Format: postgresql://user:pass@host:port/dbname
+  timeout_seconds: 10
+  retry_attempts: 3
+
+# File paths
+paths:
+  tony_tasks: /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Tony Tasks.md
+  backup_dir: /Users/printer/atlas/backups/legalkanban/
+
+# User mapping
+users:
+  tony_user_id: 1  # LegalKanban user ID for Tony
+
+# Task filtering
+filters:
+  assigned_to: 1  # Only sync tasks assigned to Tony
+  include_completed: false  # Don't pull completed tasks
+  case_status:  # Only sync tasks for these case statuses
+    - active
+    - pending
+
+# Sync behavior
+behavior:
+  remove_completed_from_local: true  # Remove completed tasks from Tony Tasks after sync
+  overwrite_due_dates: true  # Local due date changes overwrite LegalKanban
+  create_backups: true  # Backup Tony Tasks before sync
+
+# Priority mapping
+priorities:
+  high: "🔴"
+  medium: "🟡"
+  low: ""
+
+# Logging
+logging:
+  log_file: logs/legalkanban-sync.log
+  error_log_file: logs/legalkanban-sync.error.log
+  log_level: INFO
+  max_log_size_mb: 10
+  backup_count: 5
+
+# Case name display
+case_display:
+  format: last_name  # Options: last_name, full_name, case_number
+  fallback_on_duplicate: full_name
+
+# Health monitoring
+health:
+  max_sync_duration_minutes: 5
+  alert_on_failure: true
+  alert_chat_id: 8241581699

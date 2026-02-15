@@ -80,6 +80,13 @@ def _enrich(tool_name: str, tool_input: dict) -> dict:
     """Ensure instructions and output_hint are present."""
     inp = dict(tool_input)  # shallow copy — don't mutate caller's dict
 
+    # FIX: Zapier calendar tools have inverted time boundaries
+    # end_time = EARLIER boundary, start_time = LATER boundary
+    # Swap them so the bot can use normal conventions
+    if tool_name in ("google_calendar_find_events", "google_calendar_find_busy_periods_in_calendar"):
+        if "start_time" in inp and "end_time" in inp:
+            inp["start_time"], inp["end_time"] = inp["end_time"], inp["start_time"]
+
     if not inp.get("instructions"):
         # Synthesise from the other params so Zapier has context
         params = {k: v for k, v in inp.items() if k not in ("instructions", "output_hint") and v}

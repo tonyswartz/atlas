@@ -1,7 +1,30 @@
-model:
-  name: qwen2.5:7b
+# Primary Model Configuration
+# MiniMax coding plan: 100 prompts/5hrs on $10/month plan
+primary:
+  provider: minimax
+  model: MiniMax-M2.5
+  base_url: https://api.minimax.io/v1
+  api_key_env: MINIMIAX_CODING  # Coding plan API key in envchain
   max_tokens: 4096
   temperature: 0.7
+  timeout: 60.0
+
+# Fallback Models (tried in order when primary fails/rate-limited)
+fallbacks:
+  # OpenRouter (auto-select best free model)
+  - provider: openrouter
+    enabled: true
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    model: openrouter/free
+    timeout: 60.0
+
+  # Ollama (local, final fallback)
+  - provider: ollama
+    enabled: true
+    model: qwen2.5:14b
+    base_url: http://localhost:11434/v1
+    timeout: 120.0
 
 # Optional overrides for tool paths (absolute, or relative to repo root).
 # Omit or set to null to use built-in defaults.
@@ -26,11 +49,6 @@ search:
 
 goals:
   expose_goal_reading: true
-
-fallback:
-  enabled: true
-  model: MiniMax-M2.1
-  base_url: https://api.minimax.io/v1
 
 bot:
   # Empty list = no access control; anyone can use the bot. See docs/SECURITY.md.

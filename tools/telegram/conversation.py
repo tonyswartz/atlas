@@ -107,6 +107,27 @@ def _delete_session(user_id: int) -> None:
         logger.warning("Failed to delete session for user %d: %s", user_id, e)
 
 
+def _sanitize_loaded_messages(messages: list) -> list:
+    """Strip assistant tool_calls and tool messages from persisted history so we never send
+    stale tool_call ids to the API (OpenRouter/MiniMax reject 'tool id not found' when
+    tool results don't match the current turn's assistant tool_calls)."""
+    out = []
+    for m in messages:
+        role = m.get("role")
+        if role == "tool":
+            continue
+        if role == "assistant" and m.get("tool_calls"):
+            sanitized = {"role": "assistant", "content": m.get("content") or ""}
+            if sanitized["content"] and not sanitized["content"].strip().endswith("[Tools were used.]"):
+                sanitized["content"] = (sanitized["content"].strip() + "\n\n[Tools were used.]").strip()
+            elif not sanitized["content"].strip():
+                sanitized["content"] = "[Tools were used.]"
+            out.append(sanitized)
+            continue
+        out.append(m)
+    return out
+
+
 def _load_sessions() -> dict:
     """Load persisted session messages from disk. system_prompt regenerates fresh on next use."""
     _init_db()
@@ -271,7 +292,7 @@ _BAMBU_TRIGGERS = (
     "3d print",
 )
 
-# Deflection phrases — local 7B model sometimes refuses instead of acting
+# Deflection phrases — local 7B model sometimes refuses or asks for clarification instead of acting
 _DEFLECTION_PHRASES = (
     "i'm not able to",
     "i cannot",
@@ -287,6 +308,16 @@ _DEFLECTION_PHRASES = (
     "unfortunately, i",
     "i'm just an ai",
     "i don't have access",
+    # Wishy-washy clarification requests when it should just act
+    "could you specify",
+    "could you clarify",
+    "could you provide more",
+    "to better understand",
+    "which aspects are you interested in",
+    "what specifically would you like",
+    "can you provide more context",
+    "i need more information",
+    "please specify",
 )
 
 
@@ -318,58 +349,170 @@ def _strip_think(text: str) -> str:
     return _THINK_TAG.sub('', text).strip()
 
 
-def _get_fallback_client():
-    """Build an OpenAI-compatible client for the fallback model. Returns (client, model_name) or (None, None)."""
-    config = load_config()
-    fallback_cfg = config.get("fallback", {})
-    if not fallback_cfg.get("enabled", False):
-        return None, None
-    key = os.environ.get("MINIMAX", "").strip()
-    if not key:
-        logger.warning("MINIMAX key not set in .env — fallback disabled")
-        return None, None
-    base_url = fallback_cfg.get("base_url", "https://api.minimax.chat/v1")
-    model = fallback_cfg.get("model", "MiniMax-01")
-    client = openai.OpenAI(base_url=base_url, api_key=key)
-    return client, model
+def _get_openrouter_key() -> str | None:
+    """Load OpenRouter API key from environment, .env, or legacy clawdbot profiles."""
+    # Check environment first
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if key:
+        return key
+
+    # Check .env file
+    env_path = REPO_ROOT / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line.upper().startswith("OPENROUTER_API_KEY="):
+                key = line.split("=", 1)[1].strip().strip('"\'')
+                if key:
+                    return key
+
+    # Check legacy clawdbot auth profiles
+    legacy = Path.home() / ".clawdbot/agents/main/agent/auth-profiles.json"
+    if legacy.exists():
+        try:
+            prof = json.loads(legacy.read_text()).get("profiles", {}).get("openrouter:default", {})
+            if prof.get("type") == "api_key":
+                key = prof.get("key")
+                if key:
+                    return key
+        except Exception:
+            pass
+
+    return None
+
+
+def _is_rate_limit_error(error: Exception) -> bool:
+    """Check if error is a rate limit / quota exceeded error."""
+    error_str = str(error).lower()
+    # Check for common rate limit indicators
+    return any(phrase in error_str for phrase in [
+        "rate limit", "quota", "429", "too many requests",
+        "rate_limit_exceeded", "quota_exceeded", "insufficient_quota"
+    ])
+
+
+def _get_provider_client(provider_cfg: dict):
+    """Build OpenAI-compatible client for a provider config. Returns (client, model_name, provider_name) or (None, None, None)."""
+    provider = provider_cfg.get("provider", "")
+
+    if provider == "minimax":
+        api_key_env = provider_cfg.get("api_key_env", "MINIMIAX_CODING")
+        key = os.environ.get(api_key_env, "").strip()
+        if not key:
+            logger.warning(f"{api_key_env} not found — MiniMax unavailable")
+            return None, None, None
+        client = openai.OpenAI(
+            base_url=provider_cfg.get("base_url", "https://api.minimax.io/v1"),
+            api_key=key,
+            timeout=provider_cfg.get("timeout", 60.0)
+        )
+        return client, provider_cfg.get("model", "MiniMax-M2.5"), "minimax"
+
+    elif provider == "openrouter":
+        key = _get_openrouter_key()
+        if not key:
+            logger.warning("OPENROUTER_API_KEY not found — OpenRouter unavailable")
+            return None, None, None
+        client = openai.OpenAI(
+            base_url=provider_cfg.get("base_url", "https://openrouter.ai/api/v1"),
+            api_key=key,
+            timeout=provider_cfg.get("timeout", 60.0)
+        )
+        return client, provider_cfg.get("model", "openrouter/free"), "openrouter"
+
+    elif provider == "ollama":
+        client = openai.OpenAI(
+            base_url=provider_cfg.get("base_url", "http://localhost:11434/v1"),
+            api_key="ollama",
+            timeout=provider_cfg.get("timeout", 120.0)
+        )
+        return client, provider_cfg.get("model", "qwen2.5:14b"), "ollama"
+
+    return None, None, None
 
 
 def _get_client_and_model(user_id: int):
-    """Return (client, model_name) for the session's selected model. Ensures session exists."""
+    """Return (client, model_name, provider_id) for the session's selected model. Ensures session exists."""
     config = load_config()
-    model_cfg = config.get("model", {})
     if user_id not in _sessions:
         _sessions[user_id] = {
             "messages": [],
             "system_prompt": "",
             "memory_loaded": False,
-            "model_id": "ollama",
+            "model_id": "primary",  # Default to primary (MiniMax coding plan)
         }
-    model_id = _sessions[user_id].get("model_id", "ollama")
-    if model_id == "minimax":
-        client, model_name = _get_fallback_client()
-        if client and model_name:
-            return client, model_name
-        logger.warning("Session set to minimax but fallback unavailable — using ollama")
-    # Default: Ollama
+    model_id = _sessions[user_id].get("model_id", "primary")
+
+    # Try primary model
+    if model_id == "primary":
+        primary_cfg = config.get("primary", {})
+        if primary_cfg:
+            client, model_name, provider = _get_provider_client(primary_cfg)
+            if client and model_name:
+                return client, model_name, provider or "minimax"
+        logger.warning("Primary model unavailable — falling through to fallbacks")
+        model_id = "fallback"  # Fall through
+
+    # Try fallbacks in order
+    if model_id == "fallback" or model_id in ["openrouter", "minimax", "ollama"]:
+        fallbacks = config.get("fallbacks", [])
+
+        # If user manually selected a specific provider, try that first
+        if model_id in ["openrouter", "minimax", "ollama"]:
+            for fb_cfg in fallbacks:
+                if fb_cfg.get("provider") == model_id and fb_cfg.get("enabled", True):
+                    client, model_name, provider = _get_provider_client(fb_cfg)
+                    if client and model_name:
+                        return client, model_name, provider or model_id
+
+        # Otherwise try all enabled fallbacks in order
+        for fb_cfg in fallbacks:
+            if fb_cfg.get("enabled", True):
+                client, model_name, provider = _get_provider_client(fb_cfg)
+                if client and model_name:
+                    logger.info(f"Using fallback: {provider}")
+                    return client, model_name, provider or "unknown"
+
+        logger.warning("All fallbacks exhausted")
+
+    # Final fallback - Ollama (should always work if running)
+    logger.warning("Using final fallback: Ollama")
     client = openai.OpenAI(
         base_url="http://localhost:11434/v1",
         api_key="ollama",
+        timeout=120.0,
     )
-    model_name = model_cfg.get("name", "qwen2.5:7b")
-    return client, model_name
+    return client, "qwen2.5:14b", "ollama"
 
 
 def get_available_models() -> list[dict]:
     """Return list of {id, label} for models the user can select."""
     config = load_config()
-    models = [{"id": "ollama", "label": "Ollama (local)"}]
-    fallback_cfg = config.get("fallback", {})
-    if fallback_cfg.get("enabled", False) and os.environ.get("MINIMAX", "").strip():
-        models.append({
-            "id": "minimax",
-            "label": fallback_cfg.get("model", "MiniMax-01"),
-        })
+    models = []
+
+    # Primary model (MiniMax coding plan)
+    primary_cfg = config.get("primary", {})
+    if primary_cfg:
+        client, model_name, provider = _get_provider_client(primary_cfg)
+        if client and model_name:
+            models.append({
+                "id": "primary",
+                "label": f"{model_name} (primary - coding plan)",
+            })
+
+    # Fallback models
+    fallbacks = config.get("fallbacks", [])
+    for fb_cfg in fallbacks:
+        if not fb_cfg.get("enabled", True):
+            continue
+        provider = fb_cfg.get("provider", "")
+        client, model_name, provider_id = _get_provider_client(fb_cfg)
+        if client and model_name:
+            models.append({
+                "id": provider,
+                "label": f"{model_name} ({provider} - fallback)",
+            })
+
     return models
 
 
@@ -384,13 +527,13 @@ def handle_models_command(user_id: int, text: str) -> str:
     ids = [m["id"] for m in available]
 
     if not arg:
-        current = _sessions.get(user_id, {}).get("model_id", "ollama")
+        current = _sessions.get(user_id, {}).get("model_id", "openrouter")
         lines = [f"Session model: {current}", ""]
         for m in available:
             mark = " ✓" if m["id"] == current else ""
             lines.append(f"• {m['id']} — {m['label']}{mark}")
         lines.append("")
-        lines.append("Switch: /models ollama  or  /models minimax")
+        lines.append("Switch: /models <id>  (e.g., /models openrouter)")
         return "\n".join(lines)
 
     choice = arg.lower().strip()
@@ -463,7 +606,7 @@ async def handle_message(text: str, user_id: int) -> str:
     returns a text-only response.
     """
     config = load_config()
-    client, model_name = _get_client_and_model(user_id)
+    client, model_name, provider_id = _get_client_and_model(user_id)
 
     # --- Session init (or re-init after restart with persisted messages) ---
     if user_id not in _sessions or not _sessions[user_id].get("memory_loaded"):
@@ -478,7 +621,7 @@ async def handle_message(text: str, user_id: int) -> str:
                 "messages": [],
                 "system_prompt": system_prompt,
                 "memory_loaded": True,
-                "model_id": "ollama",
+                "model_id": "primary",  # Use primary model by default (MiniMax coding plan)
             }
 
     session = _sessions[user_id]
@@ -487,101 +630,46 @@ async def handle_message(text: str, user_id: int) -> str:
     session["messages"].append({"role": "user", "content": text})
     session["messages"] = _trim_history(session["messages"])
 
-    # Write raw incoming text for polling scripts (e.g. bambu reply handler)
-    (REPO_ROOT / "memory" / "last_incoming_message.txt").write_text(text, encoding="utf-8")
+    # NOTE: incoming message already written in bot.py for Bambu group only
+    # (removed duplicate write here to prevent overwriting Bambu replies)
 
-    # --- Prefetch web search when user clearly asks to browse/search the web ---
-    # DDG (browser_search) is free and tried first. Brave (web_search) is the paid fallback.
-    if _is_web_search_intent(text):
-        query = _derive_search_query(text)
-        search_result = await tool_runner.execute("browser_search", {"query": query, "count": 5})
-        used_tool = "browser_search"
-        # If DDG failed, fall back to Brave
-        try:
-            parsed = json.loads(search_result)
-            if not parsed.get("ok") or not parsed.get("results"):
-                search_result = await tool_runner.execute("web_search", {"query": query, "count": 5})
-                used_tool = "web_search"
-        except (json.JSONDecodeError, KeyError):
-            search_result = await tool_runner.execute("web_search", {"query": query, "count": 5})
-            used_tool = "web_search"
-
-        tool_call_id = "prefetch-web-search"
-        session["messages"].append({
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{
-                "id": tool_call_id,
-                "type": "function",
-                "function": {"name": used_tool, "arguments": json.dumps({"query": query, "count": 5})},
-            }],
-        })
-        session["messages"].append({
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "content": search_result,
-        })
+    # --- Prefetch web search disabled ---
+    # Let the LLM choose browser tool for current information based on tool descriptions.
+    # Prefetching search APIs bypasses the LLM's decision-making and prevents it from
+    # using the browser tool to scrape actual page content.
+    # if _is_web_search_intent(text):
+    #     ... (prefetch logic disabled)
 
     # --- Prefetch for "priorities" / "what should I focus on" ---
-    # Inject kanban + journal + reminders so the first reply is always data-backed.
+    # Run tools and inject results as a user context message. Avoids fake assistant+tool_calls
+    # which break APIs (OpenRouter/MiniMax) that validate tool_call_id against the last assistant.
     if _is_priorities_intent(text):
-        prefetch_ids = ["prefetch-kanban", "prefetch-journal", "prefetch-reminders"]
-        prefetch_calls = [
-            ("kanban_read", {}),
-            ("journal_read_recent", {"days": 7}),
-            ("reminders_read", {}),
-        ]
-        assistant_tool_calls = [
-            {"id": fid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
-            for fid, (name, args) in zip(prefetch_ids, prefetch_calls)
-        ]
-        session["messages"].append({
-            "role": "assistant",
-            "content": "",
-            "tool_calls": assistant_tool_calls,
-        })
-        for fid, (name, args) in zip(prefetch_ids, prefetch_calls):
-            result = await tool_runner.execute(name, args)
-            session["messages"].append({"role": "tool", "tool_call_id": fid, "content": result})
+        kanban = await tool_runner.execute("kanban_read", {})
+        journal = await tool_runner.execute("journal_read_recent", {"days": 7})
+        reminders = await tool_runner.execute("reminders_read", {})
+        ctx = (
+            "[Context already fetched — use this to answer; call other tools only if needed.]\n\n"
+            "**Tasks (Tony Tasks.md):**\n" + (kanban[:4000] + "…" if len(kanban) > 4000 else kanban) + "\n\n"
+            "**Journal (last 7 days):**\n" + (journal[:4000] + "…" if len(journal) > 4000 else journal) + "\n\n"
+            "**Reminders:**\n" + (reminders[:2000] + "…" if len(reminders) > 2000 else reminders)
+        )
+        session["messages"].append({"role": "user", "content": ctx})
 
     # --- Prefetch for "what's today" / "what do I have today" ---
-    # Inject reminders so the model can summarize; it will call daily_brief/calendar if needed.
     # Skip if we already prefetched (e.g. "what are my priorities today" matched priorities).
-    if _is_whats_today_intent(text) and not _is_priorities_intent(text):
-        tid = "prefetch-reminders-today"
-        session["messages"].append({
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{
-                "id": tid,
-                "type": "function",
-                "function": {"name": "reminders_read", "arguments": "{}"},
-            }],
-        })
-        session["messages"].append({
-            "role": "tool",
-            "tool_call_id": tid,
-            "content": await tool_runner.execute("reminders_read", {}),
-        })
+    elif _is_whats_today_intent(text):
+        reminders = await tool_runner.execute("reminders_read", {})
+        ctx = (
+            "[Reminders already fetched — use this; call calendar/daily_brief if needed.]\n\n"
+            "**Reminders:**\n" + (reminders[:3000] + "…" if len(reminders) > 3000 else reminders)
+        )
+        session["messages"].append({"role": "user", "content": ctx})
 
     # --- Prefetch for "remind me to ..." ---
-    # Inject current reminders so model has context when it calls reminder_add.
-    if _is_remind_me_intent(text):
-        tid = "prefetch-reminders-remind"
-        session["messages"].append({
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{
-                "id": tid,
-                "type": "function",
-                "function": {"name": "reminders_read", "arguments": "{}"},
-            }],
-        })
-        session["messages"].append({
-            "role": "tool",
-            "tool_call_id": tid,
-            "content": await tool_runner.execute("reminders_read", {}),
-        })
+    elif _is_remind_me_intent(text):
+        reminders = await tool_runner.execute("reminders_read", {})
+        ctx = "[Current reminders — use when adding the new one.]\n\n" + (reminders[:3000] + "…" if len(reminders) > 3000 else reminders)
+        session["messages"].append({"role": "user", "content": ctx})
 
     # --- Bambu/printer questions → deterministic handler ---
     # The local 7B model loops infinitely on the bambu tool. Answer directly from data.
@@ -625,10 +713,12 @@ async def handle_message(text: str, user_id: int) -> str:
                 logger.warning("slice_info fetch failed: %s", e)
         live["slice_info"] = slice_info
 
-        # Try MiniMax for a natural-language answer
+        # Try primary model for a natural-language answer
         reply = None
-        fallback_client, fallback_model = _get_fallback_client()
-        if fallback_client:
+        config = load_config()
+        primary_cfg = config.get("primary", {})
+        bambu_client, bambu_model, _ = _get_provider_client(primary_cfg)
+        if bambu_client:
             bambu_prompt = (
                 "You are a helpful assistant with access to a Bambu 3D printer.\n"
                 "Answer the user's question concisely based on the data below.\n\n"
@@ -637,10 +727,11 @@ async def handle_message(text: str, user_id: int) -> str:
                 f"User question: {text}"
             )
             try:
-                fb_resp = fallback_client.chat.completions.create(
-                    model=fallback_model,
+                fb_resp = bambu_client.chat.completions.create(
+                    model=bambu_model,
                     messages=[{"role": "user", "content": bambu_prompt}],
                     temperature=0.3,
+                    max_tokens=2048,  # Bambu prompts are short
                 )
                 reply = _strip_think(fb_resp.choices[0].message.content or "")
                 logger.info("Bambu query answered via MiniMax")
@@ -705,31 +796,108 @@ async def handle_message(text: str, user_id: int) -> str:
         _save_session(user_id)
         return reply
 
-    # --- Tool-use loop ---
-    model_cfg = config.get("model", {})
+    # --- Tool-use loop with hardened safeguards ---
+
+    # Get model_id from session to determine message role compatibility
+    session_model_id = session.get("model_id", "primary")
 
     # System prompt is prepended as a message (OpenAI convention)
     # but kept out of session["messages"] so it survives history trimming
-    api_messages = [{"role": "system", "content": session["system_prompt"]}] + session["messages"]
+    # MiniMax doesn't support system role, so we convert it to user message
+    system_role = "system" if session_model_id != "minimax" else "user"
+    api_messages = [{"role": system_role, "content": session["system_prompt"]}] + session["messages"]
 
     MAX_TOOL_ROUNDS = 10
+    MAX_CALLS_PER_TOOL = 3  # Prevent any single tool from being called too many times
+    REQUIRE_TEXT_EVERY = 4  # Force text response every N rounds
+
+    # Track tool usage to detect loops
+    tool_call_counts = {}
+    rounds_since_text = 0
+
     for _round in range(MAX_TOOL_ROUNDS):
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=api_messages,
-            tools=TOOL_DEFINITIONS,
-            temperature=model_cfg.get("temperature", 0.7),
-        )
+        # Safeguard: Force text response if too many rounds without one
+        if rounds_since_text >= REQUIRE_TEXT_EVERY:
+            logger.warning(f"Forcing text response after {rounds_since_text} rounds without text")
+            api_messages.append({
+                "role": system_role,
+                "content": "IMPORTANT: You must provide a text response now. Do not make any more tool calls until you've responded to the user."
+            })
+            rounds_since_text = 0  # Reset counter
+
+        # Try API call with automatic fallback on rate limits
+        response = None
+        used_provider = provider_id
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=api_messages,
+                tools=TOOL_DEFINITIONS,
+                temperature=config.get("primary", {}).get("temperature", 0.7),
+                max_tokens=config.get("primary", {}).get("max_tokens", 4096),
+            )
+        except Exception as e:
+            # Check if this is a rate limit error
+            if _is_rate_limit_error(e):
+                logger.warning(f"Rate limit hit on {provider_id}: {e}")
+                logger.info("Attempting fallback models...")
+
+                # Try each fallback in order
+                fallbacks = config.get("fallbacks", [])
+                for fb_cfg in fallbacks:
+                    if not fb_cfg.get("enabled", True):
+                        continue
+
+                    fb_client, fb_model, fb_provider = _get_provider_client(fb_cfg)
+                    if not fb_client or not fb_model:
+                        continue
+
+                    try:
+                        logger.info(f"Trying fallback: {fb_provider}")
+                        response = fb_client.chat.completions.create(
+                            model=fb_model,
+                            messages=api_messages,
+                            tools=TOOL_DEFINITIONS,
+                            temperature=fb_cfg.get("temperature", 0.7),
+                            max_tokens=fb_cfg.get("max_tokens", 4096),
+                        )
+                        used_provider = fb_provider
+                        logger.info(f"Fallback succeeded: {fb_provider}")
+                        break
+                    except Exception as fb_e:
+                        logger.warning(f"Fallback {fb_provider} failed: {fb_e}")
+                        continue
+
+                if not response:
+                    logger.error("All fallbacks exhausted")
+                    return f"All models unavailable. Primary error: {e}"
+            else:
+                logger.exception(f"API call failed: {e}")
+                return f"API error: {e}"
+
+        if not response:
+            return "API error: No response from any model"
+
+        if not response or not response.choices:
+            logger.error(f"Empty response from API: {response}")
+            return "Got empty response from API"
 
         message = response.choices[0].message
         tool_calls = message.tool_calls
 
+        # Debug logging
+        logger.info(f"OpenRouter response - content: {repr(message.content)}, tool_calls: {bool(tool_calls)}, finish_reason: {response.choices[0].finish_reason}")
+
         # Append assistant message to history (must include tool_calls for round-trip)
-        assistant_msg = {"role": "assistant", "content": message.content}
+        # Strip <think> tags from MiniMax responses before saving
+        content = message.content
+        if used_provider == "minimax" and content:
+            content = _strip_think(content)
+        assistant_msg = {"role": "assistant", "content": content}
         if tool_calls:
             assistant_msg["tool_calls"] = [
                 {
-                    "id": tc.id,
+                    "id": str(tc.id) if tc.id is not None else f"tool_call_{tc.function.name}_{_round}",
                     "type": "function",
                     "function": {"name": tc.function.name, "arguments": tc.function.arguments},
                 }
@@ -739,49 +907,51 @@ async def handle_message(text: str, user_id: int) -> str:
         api_messages.append(assistant_msg)
 
         if not tool_calls:
+            # Strip <think> tags from MiniMax responses
             reply = message.content or "(no response)"
-
-            # --- MiniMax fallback only when using Ollama and local model deflected ---
-            session_model = session.get("model_id", "ollama")
-            if session_model == "ollama" and _is_deflection(message.content):
-                fallback_client, fallback_model = _get_fallback_client()
-                if fallback_client and fallback_model:
-                    logger.info("Local model deflected — retrying with %s", fallback_model)
-                    try:
-                        fb_response = fallback_client.chat.completions.create(
-                            model=fallback_model,
-                            messages=api_messages,
-                            tools=TOOL_DEFINITIONS,
-                            temperature=model_cfg.get("temperature", 0.7),
-                        )
-                        fb_msg = fb_response.choices[0].message
-                        if fb_msg.content and not fb_msg.tool_calls:
-                            reply = _strip_think(fb_msg.content)
-                            logger.info("Fallback model responded successfully")
-                    except Exception as e:
-                        logger.warning("Fallback model failed: %s — using local response", e)
+            if used_provider == "minimax":
+                reply = _strip_think(reply)
 
             _save_session(user_id)
             return reply
 
+        # Safeguard: Check for tool loops before executing
+        loop_detected = False
+        for tc in tool_calls:
+            tool_call_counts[tc.function.name] = tool_call_counts.get(tc.function.name, 0) + 1
+
+            if tool_call_counts[tc.function.name] > MAX_CALLS_PER_TOOL:
+                logger.warning(f"Loop detected: {tc.function.name} called {tool_call_counts[tc.function.name]} times (max {MAX_CALLS_PER_TOOL})")
+                loop_detected = True
+                break
+
+        if loop_detected:
+            _save_sessions()
+            return f"I seem to be stuck in a loop calling the same tools repeatedly. Let me try a different approach: could you rephrase your request or break it into smaller steps?"
+
         # Execute each tool call and feed results back individually
         # (OpenAI requires one tool_result message per tool_call_id)
+        # Use string id so APIs (e.g. MiniMax/OpenRouter) that validate tool_call_id get a consistent format.
         for tc in tool_calls:
             try:
                 args = json.loads(tc.function.arguments)
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.error(f"Failed to parse tool arguments: {e}. Raw: {tc.function.arguments[:200]}")
                 args = {}
 
             logger.info("Tool call round %d: %s(%s)", _round, tc.function.name, tc.function.arguments[:120])
             result_str = await tool_runner.execute(tc.function.name, args)
 
+            tc_id = tc.id if tc.id is not None else f"tool_call_{tc.function.name}_{_round}"
             tool_result_msg = {
                 "role": "tool",
-                "tool_call_id": tc.id,
+                "tool_call_id": str(tc_id),
                 "content": result_str,
             }
             session["messages"].append(tool_result_msg)
             api_messages.append(tool_result_msg)
+
+        rounds_since_text += 1
         # Loop continues — model sees results and may call more tools or respond
 
     # Exhausted max tool rounds without a text reply

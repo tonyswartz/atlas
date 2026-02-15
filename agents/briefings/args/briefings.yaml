@@ -1,0 +1,95 @@
+# Briefings & Monitoring Configuration
+# Agent-specific settings
+
+# Daily brief (6 AM)
+daily_brief:
+  schedule: "0 6 * * *"
+  launchd_plist: ~/Library/LaunchAgents/com.atlas.daily-brief.plist
+  chat_id: 8241581699
+  components:
+    - weather
+    - reminders
+    - calendar
+    - case_law
+    - quote
+  weather_timeout_seconds: 20
+  weather_fallback_timeout_seconds: 10
+  save_paths:
+    - /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Digest/
+    - /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Research/Briefs/
+    - /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Case Law/
+
+# Research brief (3 PM)
+research_brief:
+  schedule: "0 15 * * *"
+  launchd_plist: ~/Library/LaunchAgents/com.atlas.research-brief.plist
+  chat_id: 8241581699
+  sources:
+    - topic: AI
+      keywords: ["AI", "LLM", "machine learning"]
+    - topic: Kraken
+      keywords: ["Seattle Kraken", "NHL", "hockey"]
+  lookback_hours: 24
+
+# Weekly review (Friday 5 PM)
+weekly_review:
+  schedule: "0 17 * * 5"
+  launchd_plist: ~/Library/LaunchAgents/com.atlas.weekly-review.plist
+  chat_id: 8241581699
+  components:
+    - journal_stats
+    - fitness_summary
+    - kanban_health
+    - ai_recap
+    - nudges
+  backup_journals: true
+  save_path: /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Reviews/
+
+# Health monitor (daily proactive)
+health_monitor:
+  enabled: true
+  schedule: "0 8 * * *"
+  launchd_plist: ~/Library/LaunchAgents/com.atlas.health-monitor.plist
+  chat_id: 8241581699
+  thresholds:
+    hrv_drop_percent: 15  # Alert if HRV drops >15% from 7-day avg
+    rhr_spike_bpm: 10     # Alert if RHR spikes >10 bpm
+    sleep_quality_min: 70 # Alert if sleep quality <70%
+    readiness_min: 70     # Alert if Oura readiness <70
+    workout_gap_days: 3   # Alert if no workouts in 3+ days
+  alert_throttle_hours: 24  # Max 1 alert per metric per day
+
+# Wellness coach (7:30 AM)
+wellness_coach:
+  schedule: "30 7 * * *"
+  launchd_plist: ~/Library/LaunchAgents/com.atlas.wellness-coach.plist
+  chat_id: 8241581699
+  readiness_thresholds:
+    high: 85   # Readiness >85 → intense workout
+    medium: 70 # Readiness 70-85 → moderate workout
+    low: 70    # Readiness <70 → recovery day
+  pr_detection:
+    enabled: true
+    metrics: ["steps", "hrv", "workouts", "distance"]
+
+# Reminder management
+reminders:
+  file_path: /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Tony Reminders.md
+  auto_roll_recurring: true
+  sections:
+    - Today
+    - Later This Week
+    - Shopping
+
+# Credentials (from envchain or .env)
+credentials:
+  mindsetlog_db: MINDSETLOG_DB_URL
+  oura_api: OURA_API_TOKEN
+  brave_search: BRAVE_API_KEY
+  telegram_bot: TELEGRAM_BOT_TOKEN
+
+# Logging
+logging:
+  log_dir: logs/
+  max_log_size_mb: 10
+  backup_count: 5

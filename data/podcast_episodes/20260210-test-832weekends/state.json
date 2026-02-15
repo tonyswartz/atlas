@@ -1,0 +1,19 @@
+{
+  "episode_id": "20260210-test-832weekends",
+  "podcast_name": "832weekends",
+  "status": "mixed",
+  "idea": "Starting daycare at 18 months - the guilt, the influenza A, the heartbreaking drop-offs, and learning that sometimes the hard choice is still the right choice",
+  "title": "The Hard Choice",
+  "created_at": "2026-02-10T14:45:00",
+  "script_approved_at": "2026-02-10T14:46:00",
+  "word_count": 880,
+  "voice_generated_at": "2026-02-10T19:34:26.953753",
+  "voice_file": "/Users/printer/atlas/data/podcast_episodes/20260210-test-832weekends/voice_raw.mp3",
+  "actual_duration_seconds": 273,
+  "tts_provider": "elevenlabs",
+  "mixed_at": "2026-02-10T19:34:28.329805",
+  "final_file": "/Users/printer/atlas/data/podcast_episodes/20260210-test-832weekends/mixed_final.mp3",
+  "music_beds_used": [
+    "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/bg.mp3"
+  ]
+}

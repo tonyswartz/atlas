@@ -13,20 +13,50 @@ Flow:
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
+import yaml
 from datetime import datetime
 from pathlib import Path
+
+# Add parent directory to path for common imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from common.credentials import get_telegram_token
 
 PROMPT_FILE = Path("/Users/printer/atlas/memory/bambu-pending-prompts.md")
 OPTIONS_FILE = Path("/Users/printer/atlas/memory/bambu-last-options.json")
 LOG_FILE = Path("/Users/printer/atlas/logs/bambu-prompt-poller.log")
+CONFIG_FILE = Path("/Users/printer/atlas/args/bambu_group.yaml")
 JEEVESUI_URL = "http://localhost:6001"
-TELEGRAM_TARGET = "8241581699"
+TELEGRAM_TARGET = "8241581699"  # Fallback individual chat
 
 
 def log(msg: str) -> None:
     ts = datetime.now().strftime("%y-%m-%d %H:%M:%S")
     LOG_FILE.open("a", encoding="utf-8").write(f"[{ts}] {msg}\n")
+
+
+def load_config() -> dict:
+    """Load Bambu group configuration."""
+    try:
+        if CONFIG_FILE.exists():
+            with CONFIG_FILE.open("r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+    except Exception as e:
+        log(f"Failed to load config: {e}")
+    return {}
+
+
+def get_target_chat_id() -> str:
+    """Get target chat ID from config (group if enabled, else individual)."""
+    config = load_config()
+    if config.get("enabled"):
+        chat_id = config.get("chat_id", "").strip()
+        if chat_id and chat_id != "CHAT_ID_HERE":
+            log(f"Using group chat: {chat_id}")
+            return chat_id
+    return TELEGRAM_TARGET
 
 
 def get_spools(material: str | None) -> list[dict]:
@@ -35,7 +65,7 @@ def get_spools(material: str | None) -> list[dict]:
 
     url = f"{JEEVESUI_URL}/api/filament/spools"
     try:
-        with urllib.request.urlopen(url, timeout=8) as resp:
+        with urllib.request.urlopen(url, timeout=20) as resp:
             data = json.loads(resp.read().decode())
             if not isinstance(data, list):
                 return []
@@ -209,31 +239,19 @@ def mark_sent(print_name: str) -> None:
     PROMPT_FILE.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
 
 
-def _load_bot_token() -> str | None:
-    """Read TELEGRAM_BOT_TOKEN from .env."""
-    env_path = Path("/Users/printer/atlas/.env")
-    if not env_path.exists():
-        return None
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line.startswith("TELEGRAM_BOT_TOKEN"):
-            _, _, val = line.partition("=")
-            return val.strip().strip("\"'")
-    return None
-
-
 def send_telegram(message: str) -> bool:
     import urllib.request
     import urllib.error
 
-    token = _load_bot_token()
+    token = get_telegram_token()
     if not token:
-        log("TELEGRAM_BOT_TOKEN not found in .env")
+        log("TELEGRAM_BOT_TOKEN not found in environment or .env")
         return False
 
+    chat_id = get_target_chat_id()
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({
-        "chat_id": TELEGRAM_TARGET,
+        "chat_id": chat_id,
         "text": message,
         "parse_mode": "Markdown",
     }).encode("utf-8")
@@ -373,23 +391,37 @@ def main() -> int:
             except Exception:
                 pass
 
-        # Download + parse slice_info from the 3mf to pre-fill spool and grams
+        # Get filament metadata: prefer BambuBuddy data, fallback to .3mf parsing
         slice_info = None
-        try:
-            from bambu_watcher import ftp_list_gcode_3mf, ftp_download, parse_slice_info_from_3mf
-            import tempfile
-            entries = ftp_list_gcode_3mf()
-            # Match strictly by filename — do NOT fall back to newest.
-            # Phone prints may not match the newest file on disk.
-            target_name = print_name.split("/")[-1]
-            match = next((e for e in entries if e["name"] == target_name), None)
-            if match:
-                tmp = Path(tempfile.gettempdir()) / "poller_last.gcode.3mf"
-                if ftp_download(match["name"], tmp):
-                    slice_info = parse_slice_info_from_3mf(tmp)
-                    tmp.unlink(missing_ok=True)
-        except Exception as e:
-            log(f"slice_info fetch failed: {e}")
+        filament_source = None
+
+        # Try BambuBuddy metadata first (from bambu_buddy_watcher)
+        if prompt.get("filament_type") or prompt.get("filament_color") or prompt.get("filament_grams"):
+            slice_info = {
+                "material": prompt.get("filament_type"),
+                "color": normalize_hex(prompt.get("filament_color")),
+                "used_g": prompt.get("filament_grams"),
+            }
+            filament_source = "BambuBuddy"
+            log(f"Using BambuBuddy filament metadata: {slice_info}")
+
+        # Fallback: download + parse slice_info from the 3mf
+        if not slice_info:
+            try:
+                from bambu_watcher import ftp_list_gcode_3mf, ftp_download, parse_slice_info_from_3mf
+                import tempfile
+                entries = ftp_list_gcode_3mf()
+                # Match strictly by filename — do NOT fall back to newest.
+                target_name = print_name.split("/")[-1].replace(" (Handy app)", "")
+                match = next((e for e in entries if e["name"] == target_name), None)
+                if match:
+                    tmp = Path(tempfile.gettempdir()) / "poller_last.gcode.3mf"
+                    if ftp_download(match["name"], tmp):
+                        slice_info = parse_slice_info_from_3mf(tmp)
+                        filament_source = "3MF file"
+                        tmp.unlink(missing_ok=True)
+            except Exception as e:
+                log(f"slice_info fetch failed: {e}")
 
         # If we have slice_info, find the best matching spool and pre-fill
         prefilled_spool = None
@@ -418,7 +450,8 @@ def main() -> int:
             mat = slice_info.get("material", "?")
             col = slice_info.get("color", "?")
             cname = color_name(col) or col
-            lines.append(f"_Filament from file: {mat} #{col} ({cname}), {slice_info.get('used_g','?')}g used_")
+            src = f" ({filament_source})" if filament_source else ""
+            lines.append(f"_Filament{src}: {mat} #{col} ({cname}), {slice_info.get('used_g','?')}g used_")
             lines.append("")
 
         if prefilled_spool and prefilled_grams:
@@ -427,7 +460,9 @@ def main() -> int:
             lines.append("_(3)_ Who printed this? (Jacob or Tony)")
             lines.append("")
             lines.append("If correct, reply: *name* (e.g. `Tony`)")
-            lines.append("To override, reply: *spool_number, grams, name* (e.g. `6, 39.25g, Tony`)")
+            lines.append("To override or add more spools:")
+            lines.append("  Single: `6, 39.25g, Tony`")
+            lines.append("  Multi: `5, 42g + 8, 18g, Tony`")
         else:
             lines.append("_(1)_ Which spool was used? (reply with number)")
             lines.append("")
@@ -439,7 +474,9 @@ def main() -> int:
                 "",
                 "_(3)_ Who printed this? (Jacob or Tony)",
                 "",
-                "Reply with: *spool_number, grams, name* — e.g. `6, 39.25g, Tony`",
+                "Reply format:",
+                "  Single spool: `6, 39.25g, Tony`",
+                "  Multi-color: `5, 42g + 8, 18g, Tony`",
             ])
 
         msg = "\n".join(lines)

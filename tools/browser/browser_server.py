@@ -28,9 +28,41 @@ _driver = None
 _driver_lock = Lock()
 
 
-def get_driver():
-    """Lazy-init Safari WebDriver. Must be called with _driver_lock held by caller if needed."""
+def _is_session_invalid(exc: BaseException) -> bool:
+    """True if the exception indicates the Selenium session is invalid (browser closed, etc.)."""
+    msg = (getattr(exc, "msg", None) or str(exc)).lower()
+    if "invalid session" in msg or "session id" in msg and "invalid" in msg:
+        return True
+    try:
+        from selenium.common.exceptions import InvalidSessionIdException
+        if type(exc) is InvalidSessionIdException:
+            return True
+    except ImportError:
+        pass
+    return False
+
+
+def _ensure_valid_driver():
+    """If _driver exists but session is invalid, quit and clear so get_driver() will create a new one."""
     global _driver
+    if _driver is None:
+        return
+    try:
+        _driver.current_url  # cheap check that session is alive
+    except Exception as e:
+        if _is_session_invalid(e):
+            try:
+                _driver.quit()
+            except Exception as qe:
+                logger.warning("Driver quit during cleanup: %s", qe)
+            _driver = None
+            logger.info("Cleared invalid Selenium session; next action will start a new one.")
+
+
+def get_driver():
+    """Lazy-init Safari WebDriver. Validates existing session; recreates if invalid. Call with _driver_lock held when used from handlers."""
+    global _driver
+    _ensure_valid_driver()
     if _driver is not None:
         return _driver
     try:
@@ -112,6 +144,29 @@ def handle_type(body: dict) -> dict:
     return {"ok": True, "message": "Typed"}
 
 
+def handle_upload(body: dict) -> dict:
+    """Upload a file to a file input element."""
+    selector = body.get("selector")
+    file_path = body.get("file_path", "")
+    if not selector:
+        return {"ok": False, "error": "Missing selector"}
+    if not file_path:
+        return {"ok": False, "error": "Missing file_path"}
+    by = body.get("by", "css")
+    driver = get_driver()
+    from selenium.webdriver.common.by import By
+    import os
+    # Convert to absolute path if relative
+    abs_path = os.path.abspath(file_path)
+    if not os.path.exists(abs_path):
+        return {"ok": False, "error": f"File not found: {abs_path}"}
+    by_map = {"css": By.CSS_SELECTOR, "xpath": By.XPATH, "id": By.ID, "name": By.NAME}
+    by_enum = by_map.get(by.lower(), By.CSS_SELECTOR)
+    el = driver.find_element(by_enum, selector)
+    el.send_keys(abs_path)
+    return {"ok": True, "message": f"Uploaded: {abs_path}"}
+
+
 def handle_screenshot(body: dict) -> dict:
     import base64
     driver = get_driver()
@@ -144,6 +199,7 @@ _ACTIONS = {
     "snapshot": handle_snapshot,
     "click": handle_click,
     "type": handle_type,
+    "upload": handle_upload,
     "screenshot": handle_screenshot,
     "close": handle_close,
     "status": handle_status,
@@ -170,8 +226,23 @@ class BrowserHandler(BaseHTTPRequestHandler):
             try:
                 result = _ACTIONS[action](data)
             except Exception as e:
-                logger.exception("Action %s failed", action)
-                result = {"ok": False, "error": str(e)}
+                if _is_session_invalid(e):
+                    global _driver
+                    try:
+                        if _driver is not None:
+                            _driver.quit()
+                    except Exception:
+                        pass
+                    _driver = None
+                    logger.info("Invalid session detected; cleared driver. Retrying action once.")
+                    try:
+                        result = _ACTIONS[action](data)
+                    except Exception as e2:
+                        logger.exception("Action %s failed after session reset", action)
+                        result = {"ok": False, "error": str(e2)}
+                else:
+                    logger.exception("Action %s failed", action)
+                    result = {"ok": False, "error": str(e)}
         self._send_json(200, result)
 
     def _send_json(self, code: int, obj: dict):

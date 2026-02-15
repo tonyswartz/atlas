@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Bash(*)",
       "Bash(python3:*)",
       "Bash(sqlite3:*)",
       "Bash(pip3 list:*)",
@@ -59,7 +60,14 @@
       "Bash(gog auth list:*)",
       "Bash(gog auth info:*)",
       "Bash(gog:*)",
-      "Bash(env:*)"
+      "Bash(env:*)",
+      "Bash(export GOG_KEYRING_PASSWORD=atlas_gog_keyring_2026)",
+      "Bash(tee:*)",
+      "WebFetch(domain:openrouter.ai)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:creators.spotify.com)",
+      "WebFetch(domain:podcasts.apple.com)",
+      "WebFetch(domain:waprosecutors.org)"
     ]
   }
 }

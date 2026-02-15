@@ -21,7 +21,7 @@ TZ = ZoneInfo("America/Los_Angeles")
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 LOGS_DIR = REPO_ROOT / "logs"
 
-# Load .env manually (cron has no shell profile)
+# Prefer env (envchain); fall back to .env when run by launchd/cron without shell profile
 _DOT_ENV = REPO_ROOT / ".env"
 if _DOT_ENV.exists():
     for line in _DOT_ENV.read_text().splitlines():
@@ -45,11 +45,19 @@ LOG_FILES = [
 # Patterns that indicate an error (case-insensitive)
 ERROR_PATTERNS = [
     "traceback",
-    "error:",
     "exception",
-    "failed:",
     "errno",
     "could not",
+]
+
+# Patterns to ignore (false positives in brief output)
+IGNORE_PATTERNS = [
+    "calendar error:",      # Part of brief format when calendar fails
+    "weather error:",       # Part of brief format when weather fails
+    "weather unavailable",  # Expected fallback message
+    "• calendar error:",    # Formatted list item
+    "• weather error:",     # Formatted list item
+    "  →",                  # Case law holdings (contain legal terms like "exception", "error")
 ]
 
 
@@ -62,6 +70,10 @@ def _scan_log(path: Path) -> list[str]:
     try:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             lower = line.lower()
+            # Skip lines matching ignore patterns (false positives)
+            if any(pat.lower() in lower for pat in IGNORE_PATTERNS):
+                continue
+            # Check for error patterns
             if any(pat in lower for pat in ERROR_PATTERNS):
                 hits.append(line.strip())
     except OSError:

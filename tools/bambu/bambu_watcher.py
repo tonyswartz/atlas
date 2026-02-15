@@ -2,6 +2,7 @@
 """Bambu printer watcher.
 
 Goals:
+- Notify Bambu Telegram group when a new print starts (file name + start time)
 - Detect print completion
 - Pull latest *.gcode.3mf from printer via FTPS (port 990)
 - Parse Metadata/slice_info.config for filament type/color and grams used
@@ -18,15 +19,21 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
+import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.credentials import get_telegram_token
 
 VAULT = Path.home() / "Library/CloudStorage/Dropbox/Obsidian/Tony's Vault"
 PRINT_LOG = VAULT / "Bambu" / "Print Log.md"
 STATE_FILE = Path("/Users/printer/atlas/data/bambu_last_state.json")
 LOG_PATH = Path("/Users/printer/atlas/logs/bambu-watcher.log")
 PROMPT_FILE = Path("/Users/printer/atlas/memory/bambu-pending-prompts.md")
+BAMBU_GROUP_CONFIG = Path("/Users/printer/atlas/args/bambu_group.yaml")
 
 BAMBU_IP = "192.168.4.159"
 ACCESS_CODE_FILE = Path("/Users/printer/.config/bambu/p2s.code")
@@ -101,6 +108,53 @@ def get_printer_status() -> dict | None:
         "file": data.get("file", ""),
         "error": str(data.get("error_code", 0)),
     }
+
+
+def load_bambu_group_config() -> dict:
+    """Load Bambu group config for Telegram chat_id."""
+    if not BAMBU_GROUP_CONFIG.exists():
+        return {}
+    try:
+        with BAMBU_GROUP_CONFIG.open("r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:
+        log(f"Failed to load bambu_group config: {e}")
+        return {}
+
+
+def send_telegram_to_bambu_group(message: str) -> bool:
+    """Send a message to the Bambu Telegram group (same group used for completion prompts)."""
+    import urllib.request
+    import urllib.error
+
+    token = get_telegram_token()
+    if not token:
+        log("TELEGRAM_BOT_TOKEN not found; skipping print-start notification")
+        return False
+
+    config = load_bambu_group_config()
+    if not config.get("enabled"):
+        log("Bambu group disabled; skipping print-start notification")
+        return False
+
+    chat_id = (config.get("chat_id") or "").strip()
+    if not chat_id or chat_id == "CHAT_ID_HERE":
+        log("Bambu group chat_id not set; skipping print-start notification")
+        return False
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = json.dumps({
+        "chat_id": chat_id,
+        "text": message,
+    }).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except urllib.error.URLError as e:
+        log(f"Failed to send Telegram: {e}")
+        return False
 
 
 def load_last_state() -> dict:
@@ -365,6 +419,14 @@ def main() -> int:
     is_printing_now = state in ("PRINTING", "PAUSE") or (pct < 100 and state not in ("FINISH", "IDLE", "UNKNOWN", ""))
     was_printing = bool(last.get("is_printing"))
 
+    # Notify Bambu group when a new print starts (transition: was idle -> now printing)
+    if not was_printing and is_printing_now and file_path:
+        filename = file_path.split("/")[-1] if "/" in file_path else file_path
+        started_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        msg = f"🖨️ Print started: {filename}\nStarted at {started_at}"
+        if send_telegram_to_bambu_group(msg):
+            log(f"Sent print-start notification for {filename}")
+
     # Persist last seen info
     last_completed = last.get("last_completed_print") or ""
     last_completed_at_raw = last.get("last_completed_at")  # ISO or "yy-mm-dd HH:MM:SS"
@@ -387,13 +449,16 @@ def main() -> int:
         latest_dt = entries[0].get("dt")
         skip_as_duplicate = False
         if latest == last_completed and last_completed_at:
-            # Same filename: skip only if this is clearly the same print we already logged (not a re-print).
-            # Re-print: we logged this file > 30 min ago, so treat as new completion.
-            if datetime.now() <= last_completed_at + timedelta(minutes=30):
-                if latest_dt and latest_dt <= last_completed_at + timedelta(minutes=2):
-                    skip_as_duplicate = True
-                elif not latest_dt:
-                    skip_as_duplicate = True
+            # Same filename: Only treat as new if BOTH:
+            # 1. File timestamp is newer than what we logged (actual re-print), AND
+            # 2. We actually saw a print happen (was_printing was True recently)
+            # Otherwise: it's the same old completed print sitting in FINISH state.
+            if latest_dt and latest_dt > last_completed_at + timedelta(minutes=5):
+                # File timestamp is clearly newer - this is a re-print
+                skip_as_duplicate = False
+            else:
+                # Same file, same timestamp - duplicate
+                skip_as_duplicate = True
         if skip_as_duplicate:
             log(f"Skipping duplicate completion for {latest} (already logged)")
             return None

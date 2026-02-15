@@ -1,0 +1,21 @@
+{
+  "episode_id": "20260210-134253-explore",
+  "podcast_name": "explore",
+  "title": "Testing the podcast automation system - a quick te...",
+  "status": "mixed",
+  "created_at": "2026-02-10T13:42:53.241793",
+  "idea": "Testing the podcast automation system - a quick test episode to verify voice synthesis and audio mixing work correctly",
+  "script_draft_at": "2026-02-10T13:43:35.299371",
+  "word_count": 1059,
+  "character_count": 6054,
+  "estimated_duration_seconds": 423,
+  "script_approved_at": "2026-02-10T13:44:18.041858",
+  "approved": true,
+  "voice_generated_at": "2026-02-10T13:44:28.194015",
+  "voice_file": "/Users/printer/atlas/data/podcast_episodes/20260210-134253-explore/voice_raw.mp3",
+  "actual_duration_seconds": 370,
+  "tts_provider": "elevenlabs",
+  "mixed_at": "2026-02-10T13:54:06.795589",
+  "final_file": "/Users/printer/atlas/data/podcast_episodes/20260210-134253-explore/mixed_final.mp3",
+  "music_bed_used": "audio/music_beds/explore_upbeat.mp3"
+}

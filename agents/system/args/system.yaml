@@ -1,0 +1,82 @@
+# System Automation Management Configuration
+# Agent-specific settings
+
+# Automation types
+automation_types:
+  - cron
+  - launchd
+
+# Health monitoring
+health_checks:
+  enabled: true
+  interval_minutes: 30
+  checks:
+    - cron_jobs
+    - launchd_agents
+    - log_file_sizes
+    - database_connections
+    - api_endpoints
+  alert_chat_id: 8241581699
+
+# Thresholds
+thresholds:
+  log_file_max_size_mb: 100
+  service_stale_minutes: 30
+  max_consecutive_failures: 3
+
+# Watchdog (error scanner)
+watchdog:
+  schedule: "5 6 * * *"  # 6:05 AM daily
+  launchd_plist: ~/Library/LaunchAgents/com.atlas.watchdog.plist
+  scan_paths:
+    - logs/
+  error_patterns:
+    - "traceback"
+    - "error:"
+    - "failed"
+    - "exception"
+    - "4[0-9]{2}"  # HTTP 4xx
+    - "5[0-9]{2}"  # HTTP 5xx
+  ignore_patterns:
+    - "Calendar error:"
+    - "Weather error:"
+  alert_chat_id: 8241581699
+
+# Backup management
+backups:
+  enabled: true
+  backup_dir: /Users/printer/atlas/backups/
+  retention_days: 30
+  targets:
+    - data/
+    - memory/
+    - args/
+    - launchd/
+  schedule: "0 2 * * *"  # 2 AM daily
+
+# Script generation
+script_writer:
+  templates_dir: tools/system/templates/
+  default_output_dir: tools/generated/
+  auto_install_cron: false
+  add_logging: true
+  add_error_handling: true
+
+# Launchd management
+launchd:
+  plist_dir: ~/Library/LaunchAgents/
+  prefix: com.atlas
+  default_working_directory: /Users/printer/atlas
+  default_log_dir: /Users/printer/atlas/logs
+
+# Cron management
+cron:
+  python_bin: /opt/homebrew/bin/python3
+  repo_root: /Users/printer/atlas
+
+# Logging
+logging:
+  log_dir: logs/
+  max_log_size_mb: 10
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

@@ -1,0 +1,43 @@
+# Bambu 3D Print Tracking Configuration
+# Agent-specific settings
+
+# Polling intervals (cron schedules)
+polling:
+  bambu_buddy_watcher: "*/5 * * * *"  # Every 5 minutes
+  ftp_watcher: "*/5 * * * *"           # Every 5 minutes (fallback)
+  health_check: "*/30 * * * *"         # Every 30 minutes
+
+# BambuBuddy integration
+bambu_buddy:
+  db_path: ~/apps/bambuddy/bambuddy.db
+  state_file: data/bambu_buddy_last_id.txt
+  table: print_archives
+
+# FTP settings (fallback)
+ftp:
+  hostname: printer.local
+  port: 990
+  username: bblp
+  # Password stored in envchain under 'atlas' namespace key 'BAMBU_FTP_PASSWORD'
+  metadata_path: /data/Metadata/
+
+# Prompt settings
+prompts:
+  pending_file: memory/bambu-pending-prompts.md
+  last_reply_file: memory/bambu-last-reply.txt
+  telegram_chat_id: 8241581699
+
+# JeevesUI integration
+jeevesui:
+  api_endpoint: /api/spool-log-from-telegram
+  # Base URL stored in envchain or .env
+
+# Health monitoring
+health:
+  max_stale_minutes: 20
+  alert_throttle_hours: 24
+
+# Obsidian logging (optional)
+obsidian:
+  enabled: false
+  journal_path: /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Journals/Journal.csv

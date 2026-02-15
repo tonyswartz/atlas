@@ -26,9 +26,9 @@ except ImportError:
 TZ = ZoneInfo("America/Los_Angeles")
 OBSIDIAN_VAULT = Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault")
 JOURNALS_DIR = OBSIDIAN_VAULT / "Journals"
-MINIMAX_API_KEY = os.environ.get("MINIMAX", "")
+MINIMAX_API_KEY = os.environ.get("MINIMIAX_CODING", "")
 MINIMAX_BASE_URL = "https://api.minimax.io/v1"
-MINIMAX_MODEL = "MiniMax-M2.1"
+MINIMAX_MODEL = "MiniMax-M2.5"
 
 
 def _find_journal_csv() -> Path | None:

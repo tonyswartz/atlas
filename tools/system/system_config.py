@@ -72,14 +72,17 @@ def update_chat_id(script_name: str, chat_id: str) -> Dict:
 
     # Strategy 1: Script reads from environment variable
     if "os.environ.get" in content and "TELEGRAM_CHAT_ID" in content:
-        # Update .env file
+        if not ENV_FILE.exists():
+            return {
+                "success": False,
+                "error": "No .env file. When using envchain, set with: envchain --set atlas TELEGRAM_CHAT_ID"
+            }
         if _update_env_var("TELEGRAM_CHAT_ID", chat_id):
             return {
                 "success": True,
                 "message": f"Updated TELEGRAM_CHAT_ID={chat_id} in .env. All scripts using this variable will now send to {chat_id}."
             }
-        else:
-            return {"success": False, "error": "Failed to update .env file"}
+        return {"success": False, "error": "Failed to update .env file"}
 
     # Strategy 2: Script has hardcoded chat_id
     # Pattern: chat_id = "8241581699" or TELEGRAM_CHAT_ID = "8241581699"
@@ -112,6 +115,8 @@ def update_chat_id(script_name: str, chat_id: str) -> Dict:
 def _update_env_var(key: str, value: str) -> bool:
     """
     Update or add an environment variable in .env file.
+    When using envchain (Keychain), .env may not exist; set vars with:
+      envchain --set atlas VAR_NAME
 
     Args:
         key: Environment variable name
@@ -120,12 +125,12 @@ def _update_env_var(key: str, value: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    if not ENV_FILE.exists():
+        print("No .env file; when using envchain set the variable with: envchain --set atlas", key, file=sys.stderr)
+        return False
     try:
         # Read existing .env
-        if ENV_FILE.exists():
-            lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
-        else:
-            lines = []
+        lines = ENV_FILE.read_text(encoding="utf-8").splitlines()
 
         # Update or append
         found = False

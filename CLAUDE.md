@@ -51,13 +51,37 @@ You make smart decisions. Tools execute perfectly.
 
 ## **2. Orchestration Layer — Manager (AI Role)**
 
-* Reads the relevant goal
+* **Primary Orchestrator:** Routes tasks to specialized subagents or handles directly
+* **Subagents:** Domain-specific orchestrators with focused context (see `agents/README.md`)
+* Reads the relevant goal (agent-specific or global)
 * Decides which tools (scripts) to use and in what order
-* Applies args settings to shape behavior
-* References context for domain knowledge (voice, ICP, examples, etc.)
+* Applies args settings to shape behavior (agent-specific or global)
+* References context for domain knowledge (agent-specific or global)
 * Handles errors, asks clarifying questions, makes judgment calls
 * Never executes work — it delegates intelligently
-* Example: Don't scrape websites yourself. Read `goals/research_lead.md`, understand requirements, then call `tools/lead_gen/scrape_linkedin.py` with the correct parameters.
+* Example: Don't scrape websites yourself. Read relevant goal, understand requirements, then call appropriate tools with correct parameters.
+
+### **Subagent Architecture**
+
+The system uses **specialized subagents** for complex domains:
+
+* **Telegram Agent** (`agents/telegram/`) — Conversation management, tool routing
+* **Bambu Agent** (`agents/bambu/`) — 3D print tracking, spool management
+* **LegalKanban Agent** (`agents/legalkanban/`) — Case management, task sync
+* **Briefings Agent** (`agents/briefings/`) — News, weather, reminders, health monitoring
+* **System Agent** (`agents/system/`) — Automation config, health checks, backups
+
+**When to use subagents:**
+- Task clearly belongs to one domain (Telegram bot debugging → Telegram agent)
+- Need focused context without distraction from other domains
+- Complex workflow with domain-specific goals and patterns
+
+**When to use main orchestrator:**
+- Cross-domain coordination (touches multiple agent areas)
+- One-off tasks not clearly in an agent's domain
+- Initial exploration before committing to agent structure
+
+**Routing:** Use `router.py` to automatically route tasks to appropriate agents based on keywords.
 
 ---
 
@@ -67,7 +91,7 @@ You make smart decisions. Tools execute perfectly.
 * Each has **one job**: API calls, data processing, file operations, database work, etc.
 * Fast, documented, testable, deterministic
 * They don't think. They don't decide. They just execute.
-* Credentials + environment variables handled via `.env`
+* Credentials + environment variables via `.env` or **envchain** (Apple Keychain); see `docs/ENVCHAIN.md`
 * All tools must be listed in `tools/manifest.md` with a one-sentence description
 
 ---
@@ -99,14 +123,63 @@ You make smart decisions. Tools execute perfectly.
 
 # **How to Operate**
 
-### **1. Check for existing goals first**
+### **1. Route to the right agent (if applicable)**
 
-Before starting a task, check `goals/manifest.md` for a relevant workflow.
+Before starting a task, determine if it belongs to a specific agent domain:
+
+**Use `router.py` for automatic routing:**
+```bash
+python router.py "Fix Telegram bot tool loop"
+python router.py "Debug Bambu print detection"
+python router.py "Check LegalKanban task sync"
+```
+
+**Or specify agent explicitly:**
+```bash
+python router.py --agent telegram "Task description"
+```
+
+**Agent routing keywords:**
+- **Telegram:** telegram, bot, conversation, message, chat, jeeves
+- **Bambu:** bambu, print, 3d, printer, filament, spool
+- **LegalKanban:** case, legalkanban, task sync, deadline, trial, client
+- **Briefings:** brief, news, weather, reminder, health, wellness, weekly
+- **System:** cron, launchd, config, monitor, health, backup, service
+
+**When to use main orchestrator (no agent):**
+- Cross-domain tasks touching multiple agent areas
+- One-off tasks not clearly in an agent domain
+- Initial exploration of new workflows
+
+**Benefits of agent routing:**
+- Focused context (no distraction from other domains)
+- Better debugging (isolated error traces)
+- Prevents tool loops (agent-specific safeguards)
+- Parallel execution (agents work independently)
+
+See `agents/README.md` for full subagent documentation.
+
+---
+
+### **2. Check for existing goals**
+
+Before starting a task, check for relevant goals:
+
+**Agent-specific goals** (if using an agent):
+```
+agents/{agent_name}/goals/*.md
+```
+
+**Global goals:**
+```
+goals/manifest.md
+```
+
 If a goal exists, follow it — goals define the full process for common tasks.
 
 ---
 
-### **2. Check for existing tools**
+### **3. Check for existing tools**
 
 Before writing new code, read `tools/manifest.md`.
 This is the index of all available tools.
@@ -116,7 +189,7 @@ If you create a new tool script, you **must** add it to the manifest with a 1-se
 
 ---
 
-### **3. When tools fail, fix and document**
+### **4. When tools fail, fix and document**
 
 * Read the error and stack trace carefully
 * Update the tool to handle the issue (ask if API credits are required)
@@ -126,7 +199,7 @@ If you create a new tool script, you **must** add it to the manifest with a 1-se
 
 ---
 
-### **4. Treat goals as living documentation**
+### **5. Treat goals as living documentation**
 
 * Update only when better approaches or API constraints emerge
 * Never modify/create goals without explicit permission
@@ -134,7 +207,7 @@ If you create a new tool script, you **must** add it to the manifest with a 1-se
 
 ---
 
-### **5. Communicate clearly when stuck**
+### **6. Communicate clearly when stuck**
 
 If you can't complete a task with existing tools and goals:
 
@@ -144,7 +217,7 @@ If you can't complete a task with existing tools and goals:
 
 ---
 
-### **6. Guardrails — Learned Behaviors**
+### **7. Guardrails — Learned Behaviors**
 
 Document Claude-specific mistakes here (not script bugs—those go in goals):
 
@@ -154,12 +227,13 @@ Document Claude-specific mistakes here (not script bugs—those go in goals):
 * When a workflow fails mid-execution, preserve intermediate outputs before retrying
 * Read the full goal before starting a task—don't skim
 * **NEVER DELETE YOUTUBE VIDEOS** — Video deletion is irreversible. The MCP server blocks this intentionally. If deletion is ever truly needed, ask the user 3 times and get 3 confirmations before proceeding. Direct user to YouTube Studio instead.
+* **macOS Keychain + cron = broken** — cron can't access Keychain. For scheduled tasks needing OAuth/Keychain (gog, etc.), use launchd (runs in user session) not cron.
 
 *(Add new guardrails as mistakes happen. Keep this under 15 items.)*
 
 ---
 
-### **7. First Run Initialization**
+### **8. First Run Initialization**
 
 **On first session in a new environment, check if memory infrastructure exists. If not, create it:**
 
@@ -257,7 +331,7 @@ print('Memory infrastructure initialized!')
 
 ---
 
-### **8. Memory Protocol**
+### **9. Memory Protocol**
 
 The system has persistent memory across sessions. At session start, read the memory context:
 
@@ -306,15 +380,21 @@ Every failure strengthens the system:
 
 **Where Things Live:**
 
-* `goals/` — Process Layer (what to achieve)
-* `tools/` — Execution Layer (organized by workflow)
-* `args/` — Args Layer (behavior settings)
-* `context/` — Context Layer (domain knowledge)
+* `agents/` — **Subagent Layer** (domain-specific orchestrators)
+  * `agents/{agent_name}/goals/` — Agent-specific process definitions
+  * `agents/{agent_name}/context/` — Agent-specific domain knowledge
+  * `agents/{agent_name}/args/` — Agent-specific behavior settings
+  * `agents/README.md` — Subagent architecture documentation
+* `router.py` — **Agent Router** (routes tasks to appropriate agents)
+* `goals/` — Global Process Layer (cross-domain workflows)
+* `tools/` — Execution Layer (organized by workflow, shared by all agents)
+* `args/` — Global Args Layer (system-wide settings)
+* `context/` — Global Context Layer (system-wide domain knowledge)
 * `hardprompts/` — Hard Prompts Layer (instruction templates)
 * `.tmp/` — Temporary work (scrapes, raw data, intermediate files). Disposable.
-* `.env` — API keys + environment variables
+* `.env` — API keys + environment variables (optional if using envchain; see `docs/ENVCHAIN.md`)
 * `credentials.json`, `token.json` — OAuth credentials (ignored by Git)
-* `goals/manifest.md` — Index of available goal workflows
+* `goals/manifest.md` — Index of available global goal workflows
 * `tools/manifest.md` — Master list of tools and their functions
 
 ---
@@ -330,6 +410,11 @@ Every failure strengthens the system:
 # **Your Job in One Sentence**
 
 You sit between what needs to happen (goals) and getting it done (tools).
+
+**As primary orchestrator:** Route tasks to specialized agents when appropriate, or handle directly when needed.
+
+**As subagent:** Focus on your domain with specialized context, execute workflows efficiently, and return results.
+
 Read instructions, apply args, use context, delegate well, handle failures, and strengthen the system with each run.
 
 Be direct.

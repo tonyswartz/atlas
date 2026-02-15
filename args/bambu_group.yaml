@@ -1,0 +1,35 @@
+# Bambu Print Tracking - Telegram Group Configuration
+#
+# After creating the Telegram group and adding JeevesAtlas bot:
+# 1. Send a test message in the group
+# 2. Run: envchain atlas python3 /tmp/get_group_id.py
+# 3. Replace CHAT_ID_HERE with the negative number shown for the group
+# 4. Update ENABLED to true
+
+# Enable group notifications (set to true after configuring chat_id)
+enabled: true
+
+# Telegram group chat ID (negative number for groups)
+# Get this by running the get_group_id.py script after adding bot to group
+chat_id: "-5286539940"
+
+# Fallback to individual chat if group disabled
+fallback_chat_id: "8241581699"
+
+# Confirmation messages after logging
+send_confirmation: true
+
+# Confirmation message templates
+confirmations:
+  success: "✅ Logged: {filename}\n{spools}\nUser: {user}"
+  error: "❌ Failed to log print. Check logs."
+
+# Message format for print notifications
+notification_format: |
+  🖨️ Print completed: {print_name}
+  📅 {timestamp}
+
+  Filament: {filament_info}
+
+  Reply with spool number and user name:
+  Example: `2, 36g, Tony`

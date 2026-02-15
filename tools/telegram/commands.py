@@ -81,7 +81,10 @@ def _parse(text: str) -> tuple[str, str] | None:
 # OpenRouter categorisation  (for /random and /travel only)
 # ---------------------------------------------------------------------------
 def _openrouter_key() -> str | None:
-    """Load key from .env, fall back to legacy clawdbot auth profile."""
+    """Load key from environment (envchain) or .env, fall back to legacy clawdbot auth profile."""
+    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if key:
+        return key
     env_path = REPO_ROOT / ".env"
     if env_path.exists():
         for line in env_path.read_text().splitlines():
@@ -197,87 +200,44 @@ def _cmd_capture(kind: str, raw: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# /rotary — generate next meeting agenda
+# /rotary — interactive agenda creation (directive for LLM)
 # ---------------------------------------------------------------------------
-_ROTARY_DIR      = VAULT / "Rotary"
-_ROTARY_LOG      = _ROTARY_DIR / "Rotary Log.md"
-_ROTARY_TEMPLATE = _ROTARY_DIR / "Templates" / "Agenda Template.md"
-_ROTARY_MEETINGS = _ROTARY_DIR / "Meetings"
+ROTARY_AGENDA_DIRECTIVE = """You are helping the user with Rotary meeting agendas.
+
+**If the user says "/rotary add" followed by content:**
+- This is a QUICK EDIT to an existing agenda
+- Extract the date (e.g., "2/10" → "2026-02-10") and the announcement text
+- CRITICAL WORKFLOW (you MUST follow these steps in order):
+  1. Call rotary_read_agenda with the meeting_date to get existing content
+  2. Parse the full content you received
+  3. Find the appropriate section (President Announcements or Member Announcements)
+  4. Add a bullet point (- New announcement text) to that section
+  5. Call rotary_save_agenda with the COMPLETE updated content (all sections intact)
+- NEVER call rotary_save_agenda without reading the existing content first
+- NEVER save partial content - you must preserve ALL sections of the agenda
+- Reply: "Added to 2/10 agenda ✓"
+
+**If the user says just "/rotary" or "/rotary create":**
+- This is FULL INTERACTIVE workflow:
+  1. Call rotary_read_log to get next meeting date, spotlight, speaker
+  2. Confirm: "Creating agenda for [date]. Member spotlight: [name]. Speaker: [name] — [topic]. Sound good?"
+  3. Ask one by one: guests? president announcements? member announcements? speaker bio? notes?
+  4. Call rotary_read_template to get template
+  5. Fill template with all collected info
+  6. Call rotary_save_agenda with complete content
+  7. Reply: "Agenda saved ✓ → [path]"
+
+Keep it conversational. For quick adds, just do it - don't ask for confirmation."""
 
 
-def _parse_rotary_log(text: str) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
-    """Return (spotlights, speakers) keyed by 'M/D' date string."""
-    spotlights: dict[str, str] = {}
-    speakers:   dict[str, dict[str, str]] = {}
-    current: str | None = None
-
-    for line in text.splitlines():
-        s = line.strip()
-        if s == "## Member Spotlight Schedule":
-            current = "spotlight"; continue
-        if s == "## Speaker Schedule":
-            current = "speaker"; continue
-        if s.startswith("##"):
-            current = None; continue
-
-        if current and s.startswith("- "):
-            m = re.match(r"-\s+(\d+/\d+):\s*(.*)", s)
-            if not m:
-                continue
-            date_key, value = m.group(1), m.group(2).strip()
-            if current == "spotlight":
-                spotlights[date_key] = value
-            else:
-                name, topic = (value.split(" — ", 1) + ["TBD"])[:2]
-                speakers[date_key] = {"name": name.strip(), "topic": topic.strip()}
-
-    return spotlights, speakers
-
-
-def _cmd_rotary() -> str:
-    if not _ROTARY_LOG.exists():
-        return "Rotary Log.md not found."
-    if not _ROTARY_TEMPLATE.exists():
-        return "Agenda Template.md not found."
-
-    spotlights, speakers = _parse_rotary_log(_ROTARY_LOG.read_text())
-    template = _ROTARY_TEMPLATE.read_text()
-    today = datetime.now(TZ).date()
-
-    # Find nearest upcoming (or today) meeting date from the schedule
-    best_date = None
-    best_key:  str | None = None
-    for key in spotlights:
-        try:
-            month, day = (int(x) for x in key.split("/"))
-            candidate = today.replace(month=month, day=day)
-            if candidate < today:
-                candidate = candidate.replace(year=today.year + 1)
-            if best_date is None or candidate < best_date:
-                best_date  = candidate
-                best_key   = key
-        except Exception:
-            continue
-
-    if not best_date or not best_key:
-        return "No upcoming meeting dates found in Rotary Log."
-
-    spotlight = spotlights.get(best_key, "[TBD]")
-    speaker   = speakers.get(best_key, {"name": "[TBD]", "topic": "[TBD]"})
-
-    agenda = template.replace("{{DATE}}",              best_date.strftime("%A, %B %d, %Y"))
-    agenda = agenda.replace("[insert member name]",    spotlight)
-    agenda = agenda.replace("[insert speaker name]",   speaker["name"])
-    agenda = agenda.replace("[insert speaker topic]",  speaker["topic"])
-
-    # Save to Meetings/YY/MM/DD Agenda.md  (matches existing structure)
-    out_dir  = _ROTARY_MEETINGS / best_date.strftime("%y") / best_date.strftime("%m")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_file = out_dir / f"{best_date.strftime('%d')} Agenda.md"
-    out_file.write_text(agenda)
-
-    rel = out_file.relative_to(VAULT)
-    return f"Agenda saved → {rel}\n\n{agenda}"
+def get_rotary_directive(text: str) -> str | None:
+    """If text is /rotary [optional args], return the directive; else None."""
+    t = text.strip()
+    if not t.lower().startswith("/rotary"):
+        return None
+    rest = t[7:].strip()
+    user_hint = f"\n\nThe user typed: /rotary {rest}" if rest else ""
+    return ROTARY_AGENDA_DIRECTIVE + user_hint
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +330,11 @@ HELP_TEXT = """\
 /reminder <task> [schedule] — Add to Reminders
 /rotary — Generate next Rotary agenda
 /trial [name] — Start DUI trial prep
+/task <desc> [$budget] [@project] — Create task
+/tasks [filter] — List tasks
+/approve <id> — Approve task
+/cancel <id> — Cancel task
+/status <id> — Task status
 
 ⚙️ System & Tools
 /run <script> — Run daily brief, news, etc.
@@ -414,13 +379,190 @@ def can_restart(user_id: int, allowed_user_ids: list) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Task Management Commands
+# ---------------------------------------------------------------------------
+JEEVESUI_URL = "http://localhost:6001"
+
+def _api_request(method: str, endpoint: str, data: dict = None) -> dict | None:
+    """Make API request to JeevesUI."""
+    import urllib.request
+    try:
+        url = f"{JEEVESUI_URL}{endpoint}"
+        if data:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(data).encode(),
+                headers={"Content-Type": "application/json"},
+                method=method,
+            )
+        else:
+            req = urllib.request.Request(url, method=method)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        return None
+
+def _cmd_task(arg: str) -> str:
+    """Create a new task: /task description [$budget] [@project]"""
+    if not arg:
+        return "Usage: /task <description> [$budget] [@project]\nExample: /task Add dark mode $5 @jeevesui"
+
+    # Parse budget and project from arg
+    budget = 5.0
+    project = "atlas"
+    description = arg
+
+    # Extract $budget
+    import re
+    budget_match = re.search(r'\$(\d+(?:\.\d+)?)', arg)
+    if budget_match:
+        budget = float(budget_match.group(1))
+        description = description.replace(budget_match.group(0), "").strip()
+
+    # Extract @project
+    project_match = re.search(r'@(\w+)', arg)
+    if project_match:
+        project = project_match.group(1)
+        description = description.replace(project_match.group(0), "").strip()
+
+    # Create task
+    result = _api_request("POST", "/api/tasks", {
+        "title": description,
+        "project": project,
+        "budgetUsd": budget,
+        "createdBy": "telegram",
+    })
+
+    if result and "id" in result:
+        task_id = result["id"][:8]
+        return f"✅ Task created (#{task_id})\n\nProject: {project}\nBudget: ${budget:.2f}\n\nReply `/approve {task_id}` to start"
+    else:
+        return "❌ Failed to create task - JeevesUI may be down"
+
+def _cmd_tasks(arg: str) -> str:
+    """List tasks: /tasks [pending|running|completed|all]"""
+    filter_status = arg.strip().upper() if arg else None
+    valid_statuses = ["PENDING", "APPROVED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"]
+
+    endpoint = "/api/tasks?limit=10"
+    if filter_status and filter_status in valid_statuses:
+        endpoint += f"&status={filter_status}"
+
+    result = _api_request("GET", endpoint)
+
+    if not result or "tasks" not in result:
+        return "❌ Failed to fetch tasks - JeevesUI may be down"
+
+    tasks = result["tasks"]
+    if not tasks:
+        return "No tasks found"
+
+    # Format task list
+    lines = ["*📋 Tasks*\n"]
+    for task in tasks:
+        task_id = task["id"][:8]
+        title = task["title"][:40]
+        status = task["status"]
+        budget = task["budgetUsd"]
+        spent = task.get("spentUsd", 0)
+
+        status_emoji = {
+            "PENDING": "🟡",
+            "APPROVED": "🟢",
+            "RUNNING": "⚡",
+            "COMPLETED": "✅",
+            "FAILED": "❌",
+            "CANCELLED": "🚫",
+        }.get(status, "⚪")
+
+        lines.append(f"{status_emoji} #{task_id}: {title}")
+        lines.append(f"   {status} • ${spent:.2f}/${budget:.2f}\n")
+
+    return "\n".join(lines)
+
+def _cmd_approve(arg: str) -> str:
+    """Approve a task: /approve <id>"""
+    if not arg:
+        return "Usage: /approve <task_id>\nExample: /approve abc123"
+
+    task_id = arg.strip()
+    result = _api_request("POST", f"/api/tasks/{task_id}/approve", {"approvedBy": "telegram"})
+
+    if result and "id" in result:
+        return f"✅ Task #{task_id[:8]} approved!\n\nWill execute on next poll cycle (~5 min)"
+    else:
+        return f"❌ Failed to approve task #{task_id[:8]}"
+
+def _cmd_cancel(arg: str) -> str:
+    """Cancel a task: /cancel <id>"""
+    if not arg:
+        return "Usage: /cancel <task_id>"
+
+    task_id = arg.strip()
+    result = _api_request("POST", f"/api/tasks/{task_id}/cancel", {})
+
+    if result and "id" in result:
+        return f"🚫 Task #{task_id[:8]} cancelled"
+    else:
+        return f"❌ Failed to cancel task #{task_id[:8]}"
+
+def _cmd_status(arg: str) -> str:
+    """Get task status: /status <id>"""
+    if not arg:
+        return "Usage: /status <task_id>"
+
+    task_id = arg.strip()
+    result = _api_request("GET", f"/api/tasks/{task_id}")
+
+    if not result or "id" not in result:
+        return f"❌ Task #{task_id[:8]} not found"
+
+    task = result
+    status = task["status"]
+    title = task["title"]
+    budget = task["budgetUsd"]
+    spent = task.get("spentUsd", 0)
+
+    status_emoji = {
+        "PENDING": "🟡",
+        "APPROVED": "🟢",
+        "RUNNING": "⚡",
+        "COMPLETED": "✅",
+        "FAILED": "❌",
+        "CANCELLED": "🚫",
+    }.get(status, "⚪")
+
+    lines = [
+        f"*{status_emoji} Task #{task_id[:8]}*",
+        f"\n{title}",
+        f"\nStatus: {status}",
+        f"Budget: ${spent:.2f} / ${budget:.2f}",
+    ]
+
+    # Add recent updates
+    if task.get("updates"):
+        lines.append("\n*Recent updates:*")
+        for update in task["updates"][:3]:
+            lines.append(f"• {update['message']}")
+
+    # Add error if failed
+    if status == "FAILED" and task.get("errorMessage"):
+        lines.append(f"\n*Error:* {task['errorMessage'][:200]}")
+
+    return "\n".join(lines)
+
+# ---------------------------------------------------------------------------
 # Main dispatch
 # ---------------------------------------------------------------------------
 # Maps command name → handler.  Capture commands are handled generically.
 _DISPATCH: dict[str, callable] = {
     "reminder":  lambda arg: _cmd_reminder(arg),
     "reminders": lambda arg: _cmd_reminder(arg),
-    "rotary":    lambda _:  _cmd_rotary(),
+    "task":      lambda arg: _cmd_task(arg),
+    "tasks":     lambda arg: _cmd_tasks(arg),
+    "approve":   lambda arg: _cmd_approve(arg),
+    "cancel":    lambda arg: _cmd_cancel(arg),
+    "status":    lambda arg: _cmd_status(arg),
     "run":       lambda arg: _cmd_run(arg),
     "help":      lambda _:  HELP_TEXT,
     "start":     lambda _:  START_TEXT,
@@ -507,3 +649,221 @@ def get_trial_prep_message(text: str) -> str | None:
     rest = t[6:].strip()  # after "/trial"
     case_part = f" The user specified case name: {rest}." if rest else ""
     return TRIAL_PREP_DIRECTIVE + case_part
+
+
+# ---------------------------------------------------------------------------
+# /schedule — conversational podcast schedule planning
+# ---------------------------------------------------------------------------
+SCHEDULE_DIRECTIVE = """You are helping the user plan a month of podcast episodes around a common theme.
+
+Available podcasts:
+- **sololaw** (Solo Law Club) - Weekly Friday episodes for solo lawyers
+- **832weekends** (832 Weekends) - Weekly episodes about parenting journey
+- **explore** (Explore with Tony) - Weekly Friday episodes about travel
+
+Tools available:
+- schedule_read: Read current schedule for a podcast
+- schedule_add: Add episodes to the schedule (takes JSON array of episodes)
+- schedule_preview: Show what the schedule will look like
+
+Steps:
+1. If user specified a podcast (e.g. /schedule sololaw), use that. Otherwise ask which podcast they want to plan.
+2. Ask what month and theme they want to plan around. Example: "March 2026 focused on Kanban practices for solo law firms"
+3. Ask how many episodes (typically 4 weeks = 4 episodes for monthly planning)
+4. Based on the theme, brainstorm episode topics. Use your knowledge of the podcast's style and tone:
+   - **Solo Law Club**: Practical, actionable advice for solo practitioners. Conversational tone. Framework-driven.
+   - **832 Weekends**: Reflective parenting stories. Vulnerable, honest. Focus on ordinary moments.
+   - **Explore with Tony**: Personal travel stories with sensory details. Practical resources + inspiration.
+5. For each episode, create:
+   - Title (concise, descriptive)
+   - Key Discussion Points (3-7 bullet points)
+   - Show Notes (2-3 sentences summarizing the episode)
+   - Date (Fridays for Solo Law Club and Explore, flexible for 832 Weekends)
+6. Show the user a preview of all episodes using schedule_preview
+7. Ask if they want any edits:
+   - Can edit titles, points, dates, or order
+   - Can add/remove episodes
+   - Iterate until they're happy
+8. Once approved, use schedule_add to save all episodes to the Schedule.md file
+9. Confirm: "Added 4 episodes to [podcast] schedule! You'll see these when it's time to create episodes."
+
+Be conversational and creative. Help them think through the theme and how to break it into compelling episodes. One or two questions at a time. Keep it tight."""
+
+
+def get_schedule_directive(text: str) -> str | None:
+    """If text is /schedule [podcast], return the directive; else None."""
+    t = text.strip()
+    if not t.lower().startswith("/schedule"):
+        return None
+    rest = t[9:].strip()  # after "/schedule"
+    podcast_part = f"\n\nThe user specified podcast: {rest}" if rest else ""
+    return SCHEDULE_DIRECTIVE + podcast_part
+
+
+# ---------------------------------------------------------------------------
+# /solo, /832, /explore — conversational episode editing
+# ---------------------------------------------------------------------------
+EPISODE_DIRECTIVE = """You are helping the user work on a specific podcast episode. The user can edit the script, regenerate audio, remix with different music settings, or make other changes.
+
+Available tools:
+- read_file: Read the episode's script, state, or metadata
+- podcast_regenerate_voice: Regenerate entire episode audio after script edits
+- podcast_regenerate_paragraph: Regenerate a specific paragraph (faster, cheaper)
+- edit_file: Edit the script directly (use carefully - prefer showing preview first)
+
+Steps:
+1. Determine the podcast and episode number from context
+2. Use read_file to load the current script from the episode's script_approved.md file
+   - Path: /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/<Podcast Name>/<episode_number>/script_approved.md
+3. Show the user what's currently in the episode (or relevant section)
+4. Ask what they want to change:
+   - Edit the script text (specific paragraphs or whole script)
+   - Regenerate audio for specific paragraphs (cheaper, faster)
+   - Regenerate entire episode voice
+   - Fix pronunciation issues
+5. For script edits:
+   - Show them the before/after
+   - Ask for confirmation
+   - Use edit_file to update script_approved.md
+   - Then offer to regenerate audio
+6. For audio regeneration:
+   - **Paragraph-level**: Use podcast_regenerate_paragraph (faster, ~$0.50-1.00)
+     - Can find by paragraph number or search term
+   - **Full episode**: Use podcast_regenerate_voice (slower, ~$3-5)
+   - Always check if script was edited first
+7. For pronunciation fixes:
+   - Can pass pronunciation_fixes parameter to regenerate functions
+   - Example: {"Kanban": "kahn-bahn", "WIP": "whip"}
+
+Be conversational. Ask what they want to change. Show previews before making changes. Confirm before regenerating audio (costs money).
+
+Podcast names:
+- sololaw → "Solo Law Club"
+- 832weekends → "832 Weekends"
+- explore → "Explore with Tony"
+
+Episode ID format: `<podcast_id>-<episode_number>` (e.g., "sololaw-030", "832weekends-001", "explore-005")"""
+
+
+def get_episode_directive(text: str) -> str | None:
+    """If text is /solo NNN, /832 NNN, or /explore NNN, return the directive with episode context."""
+    import re
+
+    t = text.strip()
+
+    # Check for /solo NNN
+    solo_match = re.match(r'/solo\s+(\d+)', t, re.IGNORECASE)
+    if solo_match:
+        episode_num = solo_match.group(1)
+        return EPISODE_DIRECTIVE + f"\n\nThe user wants to work on Solo Law Club episode {episode_num} (episode_id: sololaw-{episode_num})"
+
+    # Check for /832 NNN
+    eight32_match = re.match(r'/832\s+(\d+)', t, re.IGNORECASE)
+    if eight32_match:
+        episode_num = eight32_match.group(1)
+        return EPISODE_DIRECTIVE + f"\n\nThe user wants to work on 832 Weekends episode {episode_num} (episode_id: 832weekends-{episode_num})"
+
+    # Check for /explore NNN
+    explore_match = re.match(r'/explore\s+(\d+)', t, re.IGNORECASE)
+    if explore_match:
+        episode_num = explore_match.group(1)
+        return EPISODE_DIRECTIVE + f"\n\nThe user wants to work on Explore with Tony episode {episode_num} (episode_id: explore-{episode_num})"
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# /build — conversational script builder with launchd scheduling
+# ---------------------------------------------------------------------------
+BUILD_DIRECTIVE = """You are helping the user build a custom Python script and optionally schedule it to run automatically.
+
+**Available tools:**
+- script_writer: Generate/save Python scripts based on natural language descriptions
+- launchd_manager: Create launchd jobs to schedule scripts automatically
+- read_file: Read existing scripts or check what's already built
+- list_files: Browse tools/scripts/ directory
+- validate_script: Check Python syntax before scheduling
+
+**Workflow:**
+
+1. **Understand the requirement**
+   - Ask what the script should do
+   - Clarify: inputs, outputs, frequency, notifications needed
+   - Determine if it needs credentials (Telegram token, API keys, etc.)
+   - Examples:
+     * "Check my calendar every morning at 7am and text me today's events"
+     * "Monitor a website for changes every hour and notify me"
+     * "Process files in a folder daily at 5pm"
+
+2. **Draft the script**
+   - Call script_writer with:
+     * task_description: Clear description of what it does
+     * imports: List of needed imports (e.g., ["import requests", "import json"])
+     * use_envchain: true if needs credentials from Keychain
+   - Show the user the generated code
+   - Explain what it does in plain language
+
+3. **Iterate on the code**
+   - User may request changes: "add error handling", "send a Telegram notification", etc.
+   - Regenerate with updated requirements
+   - Keep iterating until user approves
+
+4. **Save the script**
+   - Ask for a filename (e.g., "calendar_morning_brief")
+   - Call script_writer to save to tools/scripts/
+   - Script will be saved as executable (.py)
+
+5. **Schedule (optional)**
+   - Ask if they want it to run automatically
+   - If yes, ask for schedule:
+     * "every 5 minutes"
+     * "daily at 9am"
+     * "every weekday at 5pm"
+     * "every hour"
+   - Call launchd_manager to create and load the job:
+     * Creates .plist file in ~/Library/LaunchAgents/
+     * Automatically loads the job
+     * Runs with envchain for credential access
+     * Logs to logs/<job-name>.log
+
+6. **Confirm completion**
+   - Show summary:
+     ✅ Script created: tools/scripts/<name>.py
+     ✅ Scheduled: <schedule description>
+     📋 Logs: logs/<job-name>.log
+
+     To test manually: /run <script_name>
+     To check status: launchctl list | grep atlas
+     To stop: launchctl unload ~/Library/LaunchAgents/com.atlas.<name>.plist
+
+**Important patterns:**
+- **Telegram notifications**: Use the standard send_telegram() pattern (see tools/briefings/daily_brief.py)
+- **File processing**: Save state to data/ directory (see tools/bambu/bambu_watcher.py)
+- **API polling**: Use state file pattern (see script_writer.py templates)
+- **Credentials**: Always use envchain for sensitive data, never hardcode
+- **Logging**: Print to stdout/stderr - launchd captures to log files automatically
+
+**Safety:**
+- Always show code before saving
+- Validate syntax before scheduling
+- Explain what the script will do in plain language
+- Confirm schedule before creating launchd job
+- Remind user they can test with /run before scheduling
+
+Be conversational. Ask clarifying questions. Show code previews. Confirm before creating/scheduling. Make it easy."""
+
+
+def get_build_directive(text: str) -> str | None:
+    """If text is /build [optional description], return the directive."""
+    t = text.strip()
+
+    if t.lower().startswith("/build"):
+        # Extract any initial description
+        description = t[6:].strip()  # Remove "/build"
+
+        if description:
+            return BUILD_DIRECTIVE + f"\n\nThe user wants to build: {description}"
+        else:
+            return BUILD_DIRECTIVE + "\n\nStart by asking the user what they want to build."
+
+    return None

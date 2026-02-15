@@ -13,8 +13,10 @@ import yaml
 # Repo root is two levels up from this file (tools/telegram/config.py)
 REPO_ROOT = Path(__file__).parent.parent.parent.resolve()
 
-# Load .env once at import time
-load_dotenv(REPO_ROOT / ".env")
+# Load .env once at import time (if present). When using envchain, vars are already in os.environ.
+_env_path = REPO_ROOT / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
 
 _config_cache = None
 

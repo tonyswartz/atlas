@@ -1,0 +1,19 @@
+{
+  "episode_id": "20260210-test-explore",
+  "podcast_name": "explore",
+  "status": "mixed",
+  "idea": "The time I got lost hiking in Olympic National Park and stumbled onto the most incredible hidden waterfall - sometimes the best adventures are the unplanned ones",
+  "title": "The Day I Got Lost on Purpose (And Found Something Better)",
+  "created_at": "2026-02-10T14:30:00",
+  "script_approved_at": "2026-02-10T14:35:00",
+  "word_count": 926,
+  "voice_generated_at": "2026-02-10T14:31:22.381317",
+  "voice_file": "/Users/printer/atlas/data/podcast_episodes/20260210-test-explore/voice_raw.mp3",
+  "actual_duration_seconds": 273,
+  "tts_provider": "elevenlabs",
+  "mixed_at": "2026-02-10T14:43:43.028293",
+  "final_file": "/Users/printer/atlas/data/podcast_episodes/20260210-test-explore/mixed_final.mp3",
+  "music_beds_used": [
+    "/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/bg.mp3"
+  ]
+}

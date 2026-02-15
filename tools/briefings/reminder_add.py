@@ -347,16 +347,106 @@ def roll_recurring_reminders() -> int:
     return rolled
 
 
+# Optional date tag in reminder lines: [YY-MM-DD]
+_DATE_TAG_RE = re.compile(r"\[(\d{2}-\d{2}-\d{2})\]")
+
+
+def _normalize_for_match(s: str) -> str:
+    """Strip and remove markdown bold so 'Garbage/Recycling**' matches 'Garbage/Recycling'."""
+    return re.sub(r"\*+", "", s.strip()).strip()
+
+
+def mark_reminders_done(patterns: list[str]) -> dict:
+    """
+    Mark reminder lines as done ([x]) when they match any of the given patterns.
+    Each pattern is matched as substring; if it contains [YY-MM-DD], the line must
+    also contain that date. Returns {success, marked_count, message}.
+    """
+    if not REMINDERS_FILE.exists():
+        return {"success": False, "marked_count": 0, "message": f"Reminders file not found: {REMINDERS_FILE}"}
+    if not patterns:
+        return {"success": True, "marked_count": 0, "message": "No items to mark done."}
+
+    content = REMINDERS_FILE.read_text(encoding="utf-8")
+    sections = parse_reminders_content(content)
+    marked = 0
+    # Build (text_part, date_tag or None) for each pattern
+    parsed_patterns: list[tuple[str, str | None]] = []
+    for p in patterns:
+        p = (p or "").strip()
+        if not p:
+            continue
+        date_tag = None
+        m = _DATE_TAG_RE.search(p)
+        if m:
+            date_tag = m.group(1)
+        text_part = _normalize_for_match(_DATE_TAG_RE.sub(" ", p))
+        if text_part:
+            parsed_patterns.append((text_part, date_tag))
+
+    for header in SECTION_HEADERS:
+        new_items: list[str] = []
+        for raw in sections.get(header, []):
+            line = raw.rstrip()
+            if not line.startswith("- "):
+                new_items.append(raw)
+                continue
+            if line.startswith("- [x]"):
+                new_items.append(raw)
+                continue
+            # Line is "- task ..." — check if it matches any pattern
+            matched = False
+            for text_part, date_tag in parsed_patterns:
+                if text_part not in _normalize_for_match(line):
+                    continue
+                if date_tag is not None and date_tag not in line:
+                    continue
+                matched = True
+                break
+            if not matched:
+                new_items.append(raw)
+                continue
+            # Replace "- " at start with "- [x] "
+            new_line = "- [x] " + line[2:]
+            new_items.append(new_line)
+            marked += 1
+        sections[header] = new_items
+
+    if marked:
+        lines_out = []
+        for h in SECTION_HEADERS:
+            lines_out.append(h)
+            for item in sections.get(h, []):
+                lines_out.append(item)
+            if not sections.get(h):
+                lines_out.append("- ")
+            lines_out.append("")
+        REMINDERS_FILE.write_text(("\n".join(lines_out)).rstrip() + "\n", encoding="utf-8")
+
+    return {
+        "success": True,
+        "marked_count": marked,
+        "message": f"Marked {marked} reminder(s) as done." if marked else "No matching reminders found.",
+    }
+
+
 def main() -> None:
     if len(sys.argv) >= 2 and sys.argv[1] == "--roll":
         n = roll_recurring_reminders()
         print(f"Rolled {n} recurring reminder(s).")
         return
+    if len(sys.argv) >= 2 and sys.argv[1] == "--mark-done":
+        import json
+        items = sys.argv[2:]
+        result = mark_reminders_done(items)
+        print(json.dumps(result))
+        sys.exit(0 if result["success"] else 1)
     if len(sys.argv) < 2:
-        print("Usage: reminder_add.py <task> [schedule]  |  reminder_add.py --roll")
+        print("Usage: reminder_add.py <task> [schedule]  |  reminder_add.py --roll  |  reminder_add.py --mark-done <item> ...")
         print("  task: reminder text")
         print("  schedule: e.g. 'weekly every thursday', 'tomorrow', 'monday', or leave empty for today")
         print("  --roll: advance past-due recurring (weekly) reminders to next occurrence.")
+        print("  --mark-done: mark matching reminder lines as done (e.g. 'Bins to curb', 'Garbage/Recycling [26-02-03]').")
         sys.exit(1)
     task = sys.argv[1]
     schedule = sys.argv[2] if len(sys.argv) > 2 else ""

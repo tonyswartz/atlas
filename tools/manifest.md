@@ -20,16 +20,18 @@ Master list of tools and their functions. Before writing new code, check this li
 |------|-------------|
 | `tools/telegram/bot.py` | Entry point — starts Telegram polling loop, routes messages, enforces allowlist. |
 | `tools/telegram/conversation.py` | Claude tool_use loop — manages per-user history, loads memory on session start, returns final reply. |
-| `tools/telegram/tool_runner.py` | Executes memory scripts as subprocesses, translates Claude tool inputs into CLI flags, parses JSON output. Exposes journal_read_recent, reminders_read, heartbeat_read (read-only). Paths configurable via args/telegram.yaml paths section. |
+| `tools/telegram/tool_runner.py` | Executes memory scripts as subprocesses, translates Claude tool inputs into CLI flags, parses JSON output. Exposes journal_read_recent, reminders_read, reminder_add, reminder_mark_done, kanban_read (Tony Tasks.md / LegalKanban), heartbeat_read (read-only). Paths configurable via args/telegram.yaml paths section. |
 | `tools/telegram/tool_definitions.py` | Anthropic tool schemas (pure data) — defines what tools Claude can call and their argument shapes. |
 | `tools/telegram/config.py` | Loads `args/telegram.yaml` and `.env` into a cached runtime config dict. |
+| `tools/telegram/mock_chat_test.py` | Mock chat: runs realistic user questions through the handler, records tools (ATLAS_TEST_RECORD_TOOLS=1), checks no errors and expected tools. Use DRY_RUN=1 for tool-only check without LLM. |
 | `tools/telegram/commands.py` | Slash-command router — intercepts /commands before the LLM. Captures (/random /travel /food etc), /rotary agenda gen, /run, /help. |
 
 ## Bambu / 3D Printing (`tools/bambu/`)
 
 | Tool | Description |
 |------|-------------|
-| `tools/bambu/bambu_watcher.py` | Polls Bambu printer (cron every 5 min); detects job completion, queues prompt. On-demand status/AMS/control via the `bambu` tool in tool_runner uses bambu-cli directly. |
+| `tools/bambu/bambu_buddy_watcher.py` | Primary tracker: queries BambuBuddy SQLite DB for completed prints (catches ALL prints: BambuStudio, Handy app, SD card). Runs every 5 min via cron. |
+| `tools/bambu/bambu_watcher.py` | FTP-based fallback: polls Bambu printer (cron every 5 min); detects job completion via FTPS, queues prompt. Misses Handy app prints. |
 | `tools/bambu/bambu_prompt_poller.py` | Sends Telegram: "New print done" + full spool list (name \| remaining g) + 3 questions; reply format "N, Xg, Name". |
 | `tools/bambu/bambu_reply_handler.py` | Parses reply "spool_number, grams, name" (e.g. 6, 39.25g, Tony); logs to JeevesUI + Obsidian. |
 | `tools/bambu/bambu_login.py` | Interactive Bambu Cloud auth; saves token to secrets/. |
@@ -56,7 +58,14 @@ Master list of tools and their functions. Before writing new code, check this li
 | `tools/briefings/local_news.py` | Aggregates local news (Ellensburg / Yakima / Seattle) with dedup and importance scoring. |
 | `tools/briefings/news_briefing.py` | Thin wrapper around local_news.py. |
 | `tools/briefings/garbage_reminder.py` | Weekly: sets next Thursday garbage/recycling line in Tony Reminders.md (1st/3rd Thu = both, 2nd/4th = garbage only). |
-| `tools/briefings/reminder_add.py` | Add a reminder to Tony Reminders.md; parses due/recurrence (e.g. weekly every thursday, tomorrow, monday). Used by /reminder in Telegram. |
+| `tools/briefings/reminder_add.py` | Add a reminder to Tony Reminders.md; parses due/recurrence (e.g. weekly thu, tomorrow). --mark-done <item> ... marks matching reminder lines as done. Used by Telegram reminder_add and reminder_mark_done. |
+| `tools/briefings/wa_prosecutors_weekly.py` | Weekly case law summary from WA Prosecutors website; scrapes most recent week's roundup, formats with smart splits by jurisdiction, sends to Telegram. Runs Monday 8am via launchd. |
+
+## Rotary (`tools/rotary/`)
+
+| Tool | Description |
+|------|-------------|
+| `tools/rotary/print_agenda.py` | Tuesday 4pm (launchd): if this week's agenda is completed, converts it to PDF (one page, markdown formatted) and prints to Brother MFC-L3780CDW; sends Telegram when done. Run with `--dry-run` to test. |
 
 ## Legal & Case Law (`tools/legal/`)
 
@@ -65,6 +74,17 @@ Master list of tools and their functions. Before writing new code, check this li
 | `tools/legal/wa_dui_bill_tracker.py` | Tracks WA legislature DUI bills; alerts via Telegram on status change. |
 | `tools/legal/wa_opinions_to_obsidian.py` | Imports WA appellate opinions into Obsidian with optional AI summarisation. |
 | `tools/legal/scrape_wa_opinions.py` | Standalone WA opinions scraper (legacy). |
+
+## LegalKanban Case Management (`tools/legalkanban/`)
+
+| Tool | Description |
+|------|-------------|
+| `tools/legalkanban/sync.py` | Master sync orchestrator: pushes local changes (completions, due dates) to LegalKanban, then pulls updated tasks. Runs daily at 7 AM via launchd. |
+| `tools/legalkanban/sync_tasks.py` | Pull incomplete tasks from LegalKanban (user 1) to Tony Tasks.md with priority indicators, case IDs, and due dates. |
+| `tools/legalkanban/sync_bidirectional.py` | Push local changes to LegalKanban: marks tasks complete and updates due dates based on Tony Tasks.md edits. |
+| `tools/legalkanban/sync_completions.py` | Legacy: marks completed tasks in LegalKanban and removes them from local file (superseded by sync_bidirectional.py). |
+| `tools/legalkanban/case_search.py` | Search open cases by name (e.g. last name). Used by Telegram bot when user creates a case task and says which case. Outputs JSON. |
+| `tools/legalkanban/task_create.py` | Create a task in LegalKanban or local Tony Tasks.md. Bot uses --system legalkanban with case_id, priority, due_date for case tasks. |
 
 ## Task Automation (`tools/tasks/`)
 
@@ -112,6 +132,24 @@ Master list of tools and their functions. Before writing new code, check this li
 | `tools/system/system_config.py` | Configure automations: update chat IDs for briefings, manage cron schedules, create monitors (YouTube, RSS). CLI: --action update_chat_id/add_cron/remove_cron/update_cron_time/create_monitor/list_automations. Exposed as `system_config` tool to Telegram bot LLM. |
 | `tools/system/cron_manager.py` | Cron job management utilities (list, add, remove, update schedules). Used by system_config.py. CLI: list/add/remove/update. |
 | `tools/system/script_writer.py` | Generate Python scripts from natural language descriptions. Creates working scripts with error handling, logging, and atlas integration. CLI: --task "description" --output "path" --schedule "cron". Exposed as `script_writer` tool to Telegram bot LLM. |
+| `tools/system/launchd_manager.py` | Create, load, unload, and list launchd jobs for scheduled automation. Parses human-readable schedules (e.g., "daily at 9am", "every 5 minutes"). CLI: create/load/unload/list. Exposed as `launchd_manager` tool to Telegram bot LLM. |
+
+## Podcast Production (`tools/podcast/`)
+
+| Tool | Description |
+|------|-------------|
+| `tools/podcast/schedule_manager.py` | Check Schedule.md for upcoming episodes; format as episode idea; remove published entries. CLI: `python tools/podcast/schedule_manager.py <podcast_id>` or `--remove <date>`. |
+| `tools/podcast/weekly_prompt.py` | Send weekly episode idea request via Telegram (scheduled per podcast: Mon/Wed/Fri 5 PM). |
+| `tools/podcast/idea_processor.py` | Parse user idea reply, create episode record, trigger script generation. |
+| `tools/podcast/script_generator.py` | Generate podcast script via Claude + hardprompt; validates length, sends preview to Telegram. |
+| `tools/podcast/script_approver.py` | Poll for user approval (checks `.approved` marker or state.json flag), trigger TTS when approved. |
+| `tools/podcast/tts_synthesizer.py` | Convert script to speech via ElevenLabs/Deepgram TTS; saves audio file, triggers mixing. |
+| `tools/podcast/audio_mixer.py` | Overlay music bed under voice via ffmpeg; applies fades, adjusts levels, sends final audio to Telegram. |
+| `tools/podcast/chapter_markers.py` | Add ID3 chapter markers to podcast episodes based on content analysis (90s minimum duration). |
+| `tools/podcast/quality_validator.py` | Pre-flight audio quality checks: clipping detection, silence periods, volume consistency. |
+| `tools/podcast/smart_pacing.py` | Analyze text to adjust TTS playback speed for better listening experience. |
+| `tools/podcast/episode_manager.py` | CLI for episode status, retry stages, mark published, archive old episodes. |
+| `tools/podcast/sync_history_from_rss.py` | Fetch each podcast RSS feed and write episode number, title, show notes to Obsidian episode history. Run to backfill/refresh; configure rss_url in podcast.yaml. |
 
 ## Intelligence & Learning (`tools/intelligence/`)
 
