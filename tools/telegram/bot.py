@@ -21,7 +21,7 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters
 from telegram.constants import ChatAction
 
-from config import load_config
+from config import load_config, get_repo_root
 from conversation import handle_message, reset_session, handle_models_command
 from commands import route as route_command, get_trial_prep_message, get_code_directive, trigger_restart, can_restart
 from group_manager import register_chat
@@ -69,9 +69,12 @@ async def on_message(update: Update, context) -> None:
     logger.info(f"Message from user {user_id} ({user.first_name}) in {chat.type} ({chat.title or 'private'}): {update.message.text[:80]}")
 
     # --- Side-channel: persist raw message for bambu reply handler polling ---
-    Path("/Users/printer/atlas/memory/last_incoming_message.txt").write_text(
-        update.message.text, encoding="utf-8"
-    )
+    try:
+        (get_repo_root() / "memory/last_incoming_message.txt").write_text(
+            update.message.text, encoding="utf-8"
+        )
+    except Exception as e:
+        logger.warning(f"Could not persist last incoming message: {e}")
 
     # --- Substitute /trial or /code with a directive for the LLM ---
     text = update.message.text
@@ -126,7 +129,7 @@ async def on_message(update: Update, context) -> None:
         await update.message.reply_text(reply)
     except Exception as e:
         logger.exception("Error handling message")
-        await update.message.reply_text(f"Couldn't do that: {e}")
+        await update.message.reply_text("An error occurred while processing your request.")
 
 
 def main():
