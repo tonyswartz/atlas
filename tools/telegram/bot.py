@@ -13,6 +13,7 @@ import sys
 import asyncio
 import logging
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 # Ensure this package's directory is on the path for sibling imports
 sys.path.insert(0, str(Path(__file__).parent))
@@ -28,6 +29,30 @@ from group_manager import register_chat
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def show_typing(chat, interval: int = 4):
+    """Continuously sends a typing action to the chat while active."""
+    async def _keep_typing():
+        try:
+            while True:
+                await chat.send_action(ChatAction.TYPING)
+                await asyncio.sleep(interval)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("Typing indicator failed: %s", e)
+
+    task = asyncio.create_task(_keep_typing())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 async def _post_init(application) -> None:
@@ -83,10 +108,6 @@ async def on_message(update: Update, context) -> None:
         if code_directive is not None:
             text = code_directive
 
-    # --- Typing indicator ---
-    if config.get("bot", {}).get("typing_indicator", True):
-        await update.message.chat.send_action(ChatAction.TYPING)
-
     # --- Handle /reset and /new (clear session, fresh context on next message) ---
     if update.message.text.strip().lower() in ("/reset", "/clear", "/new"):
         reset_session(user_id)
@@ -122,11 +143,16 @@ async def on_message(update: Update, context) -> None:
 
     # --- Process message via LLM ---
     try:
-        reply = await handle_message(text, user_id)
+        if config.get("bot", {}).get("typing_indicator", True):
+            async with show_typing(update.message.chat):
+                reply = await handle_message(text, user_id)
+        else:
+            reply = await handle_message(text, user_id)
+
         await update.message.reply_text(reply)
     except Exception as e:
         logger.exception("Error handling message")
-        await update.message.reply_text(f"Couldn't do that: {e}")
+        await update.message.reply_text(f"I ran into a problem processing that: {e}")
 
 
 def main():
