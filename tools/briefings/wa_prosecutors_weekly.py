@@ -110,11 +110,36 @@ def parse_post_html(html):
 
 def fetch_case_law():
     """Fetch and parse the most recent week's case law from WA Prosecutors."""
+    import time
+    import ssl
+
+    # Create SSL context for better connection resilience
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = True
+    ssl_context.verify_mode = ssl.CERT_REQUIRED
+
+    max_retries = 3
+
     try:
-        # First, fetch the index page to find the latest post URL
-        req = urllib.request.Request(CASE_LAW_URL, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            index_html = resp.read().decode("utf-8")
+        # First, fetch the index page to find the latest post URL (with retry)
+        index_html = None
+        for attempt in range(max_retries):
+            try:
+                req = urllib.request.Request(CASE_LAW_URL, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=60, context=ssl_context) as resp:
+                    index_html = resp.read().decode("utf-8")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                    print(f"Attempt {attempt + 1} failed, retrying in {wait_time}s: {e}", file=sys.stderr)
+                    time.sleep(wait_time)
+                else:
+                    raise
+
+        if not index_html:
+            print("Could not fetch index page after retries", file=sys.stderr)
+            return None, []
 
         latest_post_url = get_latest_post_url(index_html)
         if not latest_post_url:
@@ -123,10 +148,25 @@ def fetch_case_law():
 
         print(f"Fetching post: {latest_post_url}", file=sys.stderr)
 
-        # Fetch the individual post
-        req = urllib.request.Request(latest_post_url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            post_html = resp.read().decode("utf-8")
+        # Fetch the individual post (with retry)
+        post_html = None
+        for attempt in range(max_retries):
+            try:
+                req = urllib.request.Request(latest_post_url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=60, context=ssl_context) as resp:
+                    post_html = resp.read().decode("utf-8")
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    print(f"Attempt {attempt + 1} failed, retrying in {wait_time}s: {e}", file=sys.stderr)
+                    time.sleep(wait_time)
+                else:
+                    raise
+
+        if not post_html:
+            print("Could not fetch post after retries", file=sys.stderr)
+            return None, []
 
         # Parse the post
         week_header, sections = parse_post_html(post_html)
