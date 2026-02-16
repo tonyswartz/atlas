@@ -5,3 +5,7 @@
 ## 2026-02-15 - Continuous Typing Indicators
 **Learning:** LLM responses can be slow (e.g. tool usage), and single "typing" indicators in Telegram expire, causing user uncertainty about bot status.
 **Action:** Use an async context manager to continuously refresh typing indicators for long-running operations.
+
+## 2026-03-01 - Link Preservation in Safety Escaping
+**Learning:** Aggressive markdown escaping to prevent parsing errors (e.g. `[date]`) often breaks legitimate features like links. Users expect standard markdown syntax to work.
+**Action:** Use regex-based selective escaping to preserve valid patterns (like `[text](url)`) while sanitizing potential syntax collisions.
