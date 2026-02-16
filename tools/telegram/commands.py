@@ -221,7 +221,7 @@ ROTARY_AGENDA_DIRECTIVE = """You are helping the user with Rotary meeting agenda
 - This is FULL INTERACTIVE workflow — do NOT reply "Added to ...". Instead:
   1. Call rotary_read_log to get next meeting date, spotlight, speaker
   2. Confirm: "Creating agenda for [date]. Member spotlight: [name]. Speaker: [name] — [topic]. Sound good?"
-  3. Ask one by one: guests? president announcements? member announcements? speaker bio? notes?
+  3. Collect only PRE-SCHEDULED items. Ask one by one: president announcements? speaker bio? (Member spotlight and speaker come from the log; don't ask about guests or club/member announcements — those are fluid and handled real-time at the meeting, not pre-planned.)
   4. **Speaker LinkedIn:** When you have the speaker's name (from the log or from the user): (a) Call browser_search with a query that prefers local profiles, e.g. "[Speaker full name] LinkedIn Ellensburg" or "[Speaker full name] LinkedIn Yakima". Prefer results that mention Ellensburg, Yakima, or Central Washington. (b) When you find a likely profile URL (linkedin.com/in/...), use the browser tool (it uses Safari; the user is logged into LinkedIn there): navigate to that URL, then snapshot to scrape the page. Extract headline, about, or role from the scraped content and add both the profile URL and a short bio to the speaker bio section of the agenda.
   5. Call rotary_read_template to get template
   6. Fill template with all collected info (including speaker LinkedIn URL and scraped bio if found)
