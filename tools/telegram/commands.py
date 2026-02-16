@@ -779,16 +779,81 @@ def get_episode_directive(text: str) -> str | None:
 # ---------------------------------------------------------------------------
 # /build — conversational script builder with launchd scheduling
 # ---------------------------------------------------------------------------
-BUILD_DIRECTIVE = """You are helping the user build a custom Python script and optionally schedule it to run automatically.
+BUILD_DIRECTIVE = """You are helping the user build or modify a Python script and optionally schedule it to run automatically.
 
 **Available tools:**
+- read_file: Read existing scripts (ALWAYS check if modifying existing script)
+- list_files: Browse tools/scripts/ or tools/briefings/ directories
 - script_writer: Generate/save Python scripts based on natural language descriptions
 - launchd_manager: Create launchd jobs to schedule scripts automatically
-- read_file: Read existing scripts or check what's already built
-- list_files: Browse tools/scripts/ directory
-- validate_script: Check Python syntax before scheduling
 
-**Workflow:**
+**IMPORTANT: Detect modification vs creation**
+
+If the user mentions:
+- "modify the <script_name> script"
+- "update <script_name>"
+- "fix the <script_name>"
+- "change <script_name> to..."
+- References a specific script by name
+
+Then this is a **MODIFICATION** — follow the modification workflow below.
+
+Otherwise, this is **NEW SCRIPT CREATION** — follow the creation workflow.
+
+---
+
+## Modification Workflow (for existing scripts)
+
+**CRITICAL: Read the existing script FIRST before asking questions!**
+
+1. **Identify the script**
+   - Extract script name from user's request
+   - Common locations:
+     * tools/briefings/<script_name>.py (daily_brief, research_brief, etc.)
+     * tools/system/<script_name>.py
+     * tools/scripts/<script_name>.py
+   - Use read_file to load the current version
+
+2. **Understand the current implementation**
+   - Read the entire script
+   - Identify: data sources, output format, dependencies, configuration
+   - Answer questions yourself from the code:
+     * Where does data come from? (API, RSS, file, database)
+     * What's the output? (Telegram, file, console)
+     * What credentials are needed? (check imports and env vars)
+     * How is it currently scheduled? (check CLAUDE.md or git log for cron/launchd)
+
+3. **Make the modification**
+   - Understand what the user wants changed
+   - Make MINIMAL changes (don't refactor unrelated code)
+   - Preserve existing patterns and style
+   - Use read_file and then describe the changes you'll make
+
+4. **Show the changes**
+   - Explain what you're changing and why
+   - Show the relevant before/after code snippets
+   - Get user approval
+
+5. **Save the updated script**
+   - Use read_file to get current content, make edits, then save
+   - Confirm: "Updated <script_name>.py ✅"
+
+**Example modification flow:**
+```
+User: "/build the research brief script pulls old stories..."
+
+You (internally): This mentions "research brief script" → modification workflow
+  1. Read tools/briefings/research_brief.py
+  2. Analyze: uses Google News RSS, parses <item> tags, no date filtering
+  3. Understand the issue: no pubDate extraction → shows old articles
+  4. Draft solution: add date parsing, filter to last 24 hours
+  5. Show user the changes
+  6. User approves → save updated script
+```
+
+---
+
+## Creation Workflow (for new scripts)
 
 1. **Understand the requirement**
    - Ask what the script should do
@@ -866,7 +931,14 @@ def get_build_directive(text: str) -> str | None:
         description = t[6:].strip()  # Remove "/build"
 
         if description:
-            return BUILD_DIRECTIVE + f"\n\nThe user wants to build: {description}"
+            # Check if this looks like a modification request
+            modification_keywords = ["modify", "update", "fix", "change", "the script", "script pulls", "script shows"]
+            is_modification = any(keyword in description.lower() for keyword in modification_keywords)
+
+            if is_modification:
+                return BUILD_DIRECTIVE + f"\n\n**MODIFICATION REQUEST**\n\nThe user wants to modify an existing script: {description}\n\nREMEMBER: Read the existing script FIRST using read_file before asking any questions. The script likely already exists in tools/briefings/, tools/system/, or tools/scripts/."
+            else:
+                return BUILD_DIRECTIVE + f"\n\nThe user wants to build: {description}"
         else:
             return BUILD_DIRECTIVE + "\n\nStart by asking the user what they want to build."
 

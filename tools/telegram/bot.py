@@ -299,8 +299,19 @@ async def on_message(update: Update, context) -> None:
         if podcast_handled:
             return
 
-    # --- Substitute special commands with directives for the LLM ---
+    # --- Check if /build or /code used outside coding group ---
     text = update.message.text
+    coding_group_id = config.get("bot", {}).get("groups", {}).get("code")
+    if coding_group_id:
+        text_lower = text.strip().lower()
+        if (text_lower.startswith("/build") or text_lower.startswith("/code")) and chat.id != coding_group_id:
+            await update.message.reply_text(
+                "Please use /build and /code commands in the Coding group for better organization.",
+                parse_mode="Markdown"
+            )
+            return
+
+    # --- Substitute special commands with directives for the LLM ---
     trial_directive = get_trial_prep_message(text)
     if trial_directive is not None:
         text = trial_directive

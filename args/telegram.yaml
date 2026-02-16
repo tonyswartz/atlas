@@ -54,3 +54,9 @@ bot:
   # Empty list = no access control; anyone can use the bot. See docs/SECURITY.md.
   allowed_user_ids: []
   typing_indicator: true
+
+  # Group-specific routing
+  groups:
+    code: -5181994146  # Coding group - for /build and /code commands
+    daily: -5254628791  # Daily group - for briefings
+    bambu: -5286539940  # Bambu group - for 3D printer notifications

@@ -3,19 +3,22 @@
 Daily Research Brief - Tech + Seattle Kraken news
 Delivers a detailed summary to Telegram at 3pm daily.
 Tracks seen articles by topic+link so we never show the same story twice; state is pruned to last 3000.
+Filters to articles published in the last 24 hours to avoid stale stories.
 """
 
+import email.utils
 import html
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
 
 import requests
 
 TELEGRAM_MAX_LEN = 4000
+HOURS_BACK = 24  # Only show articles from the last 24 hours
 
 # Load .env when run by cron (no shell env)
 try:
@@ -69,7 +72,7 @@ def strip_query_params(url: str) -> str:
 
 
 def fetch_rss(url):
-    """Fetch and parse RSS feed. Extracts source name from <source> tag for attribution."""
+    """Fetch and parse RSS feed. Extracts source name and filters to last HOURS_BACK hours."""
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
@@ -78,20 +81,43 @@ def fetch_rss(url):
         if response.status_code == 200:
             items = re.findall(r'<item[^>]*>(.*?)</item>', response.text, re.DOTALL)
             results = []
-            for item in items[:10]:
+            now = datetime.now(timezone.utc)
+            cutoff = now - timedelta(hours=HOURS_BACK)
+
+            # Fetch more items initially since we'll filter by date
+            for item in items[:20]:
                 title_match = re.search(r'<title>([^<]+)</title>', item)
                 link_match = re.search(r'<link>([^<]+)</link>', item)
                 # <source url="https://www.bloomberg.com">Bloomberg</source>
                 source_match = re.search(r'<source\s+url="([^"]*)"[^>]*>([^<]*)</source>', item)
+                # <pubDate>Sat, 15 Feb 2026 14:30:00 GMT</pubDate>
+                pubdate_match = re.search(r'<pubDate>([^<]+)</pubDate>', item)
 
                 if title_match and link_match:
                     raw_url = strip_query_params(link_match.group(1).strip())
+
+                    # Parse publication date
+                    pub_date = None
+                    if pubdate_match:
+                        try:
+                            # email.utils.parsedate_to_datetime handles RFC 2822 format (RSS standard)
+                            pub_date = email.utils.parsedate_to_datetime(pubdate_match.group(1))
+                        except Exception as e:
+                            print(f"  Could not parse date '{pubdate_match.group(1)}': {e}")
+
+                    # Filter: skip if too old or no date (assume current if no date)
+                    if pub_date and pub_date < cutoff:
+                        continue
+
                     results.append({
                         "title": title_match.group(1).strip(),
                         "url": raw_url,
-                        "source": source_match.group(2).strip() if source_match else ""
+                        "source": source_match.group(2).strip() if source_match else "",
+                        "pubdate": pub_date.isoformat() if pub_date else None
                     })
-            return results
+
+            # Return up to 10 recent articles
+            return results[:10]
     except Exception as e:
         print(f"  Error fetching: {e}")
     return []
