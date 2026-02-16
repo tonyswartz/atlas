@@ -1,0 +1,23 @@
+---
+description: Sync repo with git pull/push before starting edits or file review in a new chat
+alwaysApply: true
+---
+
+# Git Sync Before Edits
+
+At the **start of a new chat** (before making edits or reviewing files), sync the workspace with the remote:
+
+1. **Pull** to get the latest from remote:
+   ```bash
+   git pull --rebase
+   ```
+   (Use `git pull` if you prefer merge; `--rebase` keeps history linear.)
+
+2. **Push** if there are local commits that haven’t been pushed:
+   ```bash
+   git status
+   # If ahead of origin, run:
+   git push
+   ```
+
+Run these in the project root. If pull has conflicts or push is rejected, report that to the user before changing files. After sync (or after reporting a sync problem), proceed with the requested edits or review.
