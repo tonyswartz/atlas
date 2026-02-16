@@ -69,20 +69,26 @@ def tokenize(text: str) -> List[str]:
 
 
 def simple_bm25_score(query_tokens: List[str], doc_tokens: List[str],
-                      avg_doc_len: float, doc_count: int,
-                      doc_freqs: Dict[str, int], k1: float = 1.5, b: float = 0.75) -> float:
+                      avg_doc_len: float, idf_map: Dict[str, float],
+                      k1: float = 1.5, b: float = 0.75) -> float:
     """
     Simple BM25 scoring when rank_bm25 is not available.
     """
     score = 0.0
     doc_len = len(doc_tokens)
-    doc_counter = Counter(doc_tokens)
+
+    # Optimize counting: only count query terms
+    tf_map = {t: 0 for t in query_tokens}
+    query_set = set(query_tokens)
+
+    for token in doc_tokens:
+        if token in query_set:
+            tf_map[token] += 1
 
     for term in query_tokens:
-        if term in doc_counter:
-            tf = doc_counter[term]
-            df = doc_freqs.get(term, 1)
-            idf = math.log((doc_count - df + 0.5) / (df + 0.5) + 1)
+        tf = tf_map[term]
+        if tf > 0:
+            idf = idf_map.get(term, 0)
 
             numerator = tf * (k1 + 1)
             denominator = tf + k1 * (1 - b + b * (doc_len / avg_doc_len))
@@ -153,11 +159,18 @@ def bm25_search(
             for token in unique_tokens:
                 doc_freqs[token] += 1
 
+        # Pre-calculate IDF for query tokens
+        doc_count = len(entries)
+        idf_map = {}
+        for term in query_tokens:
+            df = doc_freqs.get(term, 1)
+            idf_map[term] = math.log((doc_count - df + 0.5) / (df + 0.5) + 1)
+
         scores = []
         for doc_tokens in doc_tokens_list:
             score = simple_bm25_score(
                 query_tokens, doc_tokens, avg_doc_len,
-                len(entries), doc_freqs
+                idf_map
             )
             scores.append(score)
 
