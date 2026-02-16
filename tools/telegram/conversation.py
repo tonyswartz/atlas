@@ -798,14 +798,16 @@ async def handle_message(text: str, user_id: int) -> str:
 
     # --- Tool-use loop with hardened safeguards ---
 
-    # Get model_id from session to determine message role compatibility
-    session_model_id = session.get("model_id", "primary")
-
-    # System prompt is prepended as a message (OpenAI convention)
-    # but kept out of session["messages"] so it survives history trimming
-    # MiniMax doesn't support system role, so we convert it to user message
-    system_role = "system" if session_model_id != "minimax" else "user"
+    # Use the actual provider we're calling to decide message role compatibility.
+    # MiniMax rejects "system" role (API 2013); others accept it.
+    system_role = "system" if provider_id != "minimax" else "user"
     api_messages = [{"role": system_role, "content": session["system_prompt"]}] + session["messages"]
+
+    def _messages_for_provider(provider: str, messages: list) -> list:
+        """Return messages with first message role compatible with provider (MiniMax needs 'user' not 'system')."""
+        if provider != "minimax" or not messages or messages[0].get("role") != "system":
+            return messages
+        return [{"role": "user", "content": messages[0]["content"]}] + messages[1:]
 
     MAX_TOOL_ROUNDS = 10
     MAX_CALLS_PER_TOOL = 3  # Prevent any single tool from being called too many times
@@ -829,9 +831,10 @@ async def handle_message(text: str, user_id: int) -> str:
         response = None
         used_provider = provider_id
         try:
+            request_messages = _messages_for_provider(provider_id, api_messages)
             response = client.chat.completions.create(
                 model=model_name,
-                messages=api_messages,
+                messages=request_messages,
                 tools=TOOL_DEFINITIONS,
                 temperature=config.get("primary", {}).get("temperature", 0.7),
                 max_tokens=config.get("primary", {}).get("max_tokens", 4096),
@@ -854,9 +857,10 @@ async def handle_message(text: str, user_id: int) -> str:
 
                     try:
                         logger.info(f"Trying fallback: {fb_provider}")
+                        fb_messages = _messages_for_provider(fb_provider, api_messages)
                         response = fb_client.chat.completions.create(
                             model=fb_model,
-                            messages=api_messages,
+                            messages=fb_messages,
                             tools=TOOL_DEFINITIONS,
                             temperature=fb_cfg.get("temperature", 0.7),
                             max_tokens=fb_cfg.get("max_tokens", 4096),
