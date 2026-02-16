@@ -8,6 +8,7 @@ Each subsequent message appends to the existing conversation history.
 
 import os
 import json
+import sqlite3
 import logging
 import openai
 from pathlib import Path
@@ -20,41 +21,117 @@ REPO_ROOT = get_repo_root()
 logger = logging.getLogger(__name__)
 
 _SESSIONS_PATH = REPO_ROOT / "data" / "sessions.json"
+_SESSIONS_DB_PATH = REPO_ROOT / "data" / "sessions.db"
+
+
+def _init_db() -> None:
+    """Initialize the sessions database table."""
+    try:
+        _SESSIONS_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(_SESSIONS_DB_PATH) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS sessions (user_id INTEGER PRIMARY KEY, data TEXT)"
+            )
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.error("Failed to initialize sessions DB: %s", e)
+
+
+def _migrate_json_to_db() -> None:
+    """Migrate legacy sessions.json to SQLite if needed."""
+    if not _SESSIONS_PATH.exists():
+        return
+
+    try:
+        with sqlite3.connect(_SESSIONS_DB_PATH) as conn:
+            # Check if DB is already populated to avoid overwriting with stale JSON
+            cursor = conn.execute("SELECT count(*) FROM sessions")
+            if cursor.fetchone()[0] > 0:
+                logger.warning("DB already populated; skipping migration from %s", _SESSIONS_PATH.name)
+                return
+
+            logger.info("Migrating sessions.json to SQLite...")
+            raw = json.loads(_SESSIONS_PATH.read_text(encoding="utf-8"))
+            for k, v in raw.items():
+                try:
+                    uid = int(k)
+                    data = json.dumps({
+                        "messages": v.get("messages", []),
+                        "model_id": v.get("model_id", "ollama"),
+                    })
+                    conn.execute(
+                        "INSERT OR REPLACE INTO sessions (user_id, data) VALUES (?, ?)",
+                        (uid, data)
+                    )
+                except ValueError:
+                    logger.warning("Skipping invalid user ID during migration: %s", k)
+            conn.commit()
+
+        # Rename legacy file
+        backup = _SESSIONS_PATH.with_suffix(".json.migrated")
+        _SESSIONS_PATH.rename(backup)
+        logger.info("Migration complete. Legacy file renamed to %s", backup.name)
+
+    except (json.JSONDecodeError, OSError, sqlite3.Error) as e:
+        logger.error("Migration failed: %s", e)
+
+
+def _save_session(user_id: int) -> None:
+    """Persist a single user's session to DB."""
+    sess = _sessions.get(user_id)
+    if not sess:
+        return
+
+    try:
+        data = json.dumps({
+            "messages": sess.get("messages", []),
+            "model_id": sess.get("model_id", "ollama"),
+        })
+        with sqlite3.connect(_SESSIONS_DB_PATH) as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO sessions (user_id, data) VALUES (?, ?)",
+                (user_id, data)
+            )
+            conn.commit()
+    except (sqlite3.Error, OSError) as e:
+        logger.warning("Failed to save session for user %d: %s", user_id, e)
+
+
+def _delete_session(user_id: int) -> None:
+    """Remove a user's session from DB."""
+    try:
+        with sqlite3.connect(_SESSIONS_DB_PATH) as conn:
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+            conn.commit()
+    except sqlite3.Error as e:
+        logger.warning("Failed to delete session for user %d: %s", user_id, e)
 
 
 def _load_sessions() -> dict:
     """Load persisted session messages from disk. system_prompt regenerates fresh on next use."""
-    if not _SESSIONS_PATH.exists():
-        return {}
-    try:
-        raw = json.loads(_SESSIONS_PATH.read_text(encoding="utf-8"))
-        return {
-            int(k): {
-                "messages": v.get("messages", []),
-                "system_prompt": "",
-                "memory_loaded": False,
-                "model_id": v.get("model_id", "ollama"),
-            }
-            for k, v in raw.items()
-        }
-    except (json.JSONDecodeError, OSError):
-        return {}
+    _init_db()
+    _migrate_json_to_db()
 
-
-def _save_sessions() -> None:
-    """Persist current session messages to disk for restart continuity."""
     try:
-        _SESSIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        out = {
-            str(uid): {
-                "messages": sess.get("messages", []),
-                "model_id": sess.get("model_id", "ollama"),
-            }
-            for uid, sess in _sessions.items()
-        }
-        _SESSIONS_PATH.write_text(json.dumps(out), encoding="utf-8")
-    except OSError as e:
-        logger.warning("Failed to persist sessions: %s", e)
+        with sqlite3.connect(_SESSIONS_DB_PATH) as conn:
+            cursor = conn.execute("SELECT user_id, data FROM sessions")
+            raw_sessions = {}
+            for row in cursor:
+                uid, data_str = row
+                try:
+                    data = json.loads(data_str)
+                    raw_sessions[uid] = {
+                        "messages": data.get("messages", []),
+                        "system_prompt": "",
+                        "memory_loaded": False,
+                        "model_id": data.get("model_id", "ollama"),
+                    }
+                except json.JSONDecodeError:
+                    logger.warning("Skipping corrupt session data for user %d", uid)
+            return raw_sessions
+    except sqlite3.Error as e:
+        logger.error("Failed to load sessions from DB: %s", e)
+        return {}
 
 
 # Per-user conversation state: { user_id: { messages, system_prompt, memory_loaded, model_id } }
@@ -328,7 +405,7 @@ def handle_models_command(user_id: int, text: str) -> str:
             "model_id": "ollama",
         }
     _sessions[user_id]["model_id"] = choice
-    _save_sessions()
+    _save_session(user_id)
     label = next(m["label"] for m in available if m["id"] == choice)
     return f"Session set to {choice} ({label}). Your next messages will use this model."
 
@@ -625,7 +702,7 @@ async def handle_message(text: str, user_id: int) -> str:
             reply = "\n".join(lines)
 
         session["messages"].append({"role": "assistant", "content": reply})
-        _save_sessions()
+        _save_session(user_id)
         return reply
 
     # --- Tool-use loop ---
@@ -684,7 +761,7 @@ async def handle_message(text: str, user_id: int) -> str:
                     except Exception as e:
                         logger.warning("Fallback model failed: %s — using local response", e)
 
-            _save_sessions()
+            _save_session(user_id)
             return reply
 
         # Execute each tool call and feed results back individually
@@ -709,11 +786,11 @@ async def handle_message(text: str, user_id: int) -> str:
 
     # Exhausted max tool rounds without a text reply
     logger.warning("Tool-use loop hit %d rounds without text reply — returning last content", MAX_TOOL_ROUNDS)
-    _save_sessions()
+    _save_session(user_id)
     return message.content or "(tool loop limit reached — no text response)"
 
 
 def reset_session(user_id: int) -> None:
     """Clear a user's conversation state. Next message will reload memory."""
     _sessions.pop(user_id, None)
-    _save_sessions()
+    _delete_session(user_id)
