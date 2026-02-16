@@ -31,10 +31,9 @@ import sys
 import json
 import argparse
 import re
-import math
+import sqlite3
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Set
-from collections import Counter
 from dotenv import load_dotenv
 
 # Load environment
@@ -50,13 +49,6 @@ except ImportError as e:
     print(f"Error importing modules: {e}", file=sys.stderr)
     sys.exit(1)
 
-# Try to import rank_bm25, fall back to simple implementation
-try:
-    from rank_bm25 import BM25Okapi
-    HAS_BM25 = True
-except ImportError:
-    HAS_BM25 = False
-
 
 def tokenize(text: str) -> List[str]:
     """Simple tokenizer for BM25."""
@@ -68,115 +60,92 @@ def tokenize(text: str) -> List[str]:
     return [t for t in tokens if len(t) > 1]
 
 
-def simple_bm25_score(query_tokens: List[str], doc_tokens: List[str],
-                      avg_doc_len: float, doc_count: int,
-                      doc_freqs: Dict[str, int], k1: float = 1.5, b: float = 0.75) -> float:
-    """
-    Simple BM25 scoring when rank_bm25 is not available.
-    """
-    score = 0.0
-    doc_len = len(doc_tokens)
-    doc_counter = Counter(doc_tokens)
-
-    for term in query_tokens:
-        if term in doc_counter:
-            tf = doc_counter[term]
-            df = doc_freqs.get(term, 1)
-            idf = math.log((doc_count - df + 0.5) / (df + 0.5) + 1)
-
-            numerator = tf * (k1 + 1)
-            denominator = tf + k1 * (1 - b + b * (doc_len / avg_doc_len))
-
-            score += idf * (numerator / denominator)
-
-    return score
-
-
-def get_all_entries_for_bm25() -> List[Dict[str, Any]]:
-    """Get all active entries for BM25 indexing."""
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        SELECT id, type, content, source, importance, tags, created_at
-        FROM memory_entries
-        WHERE is_active = 1
-        ORDER BY importance DESC
-    ''')
-
-    entries = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return entries
-
-
 def bm25_search(
     query: str,
     entries: Optional[List[Dict]] = None,
-    limit: int = 20
+    limit: int = 20,
+    entry_type: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
-    Perform BM25 keyword search.
+    Perform BM25 keyword search using SQLite FTS5.
 
     Args:
         query: Search query
-        entries: Optional pre-loaded entries
+        entries: Deprecated/Ignored (kept for compatibility)
         limit: Maximum results
+        entry_type: Optional type filter
 
     Returns:
         List of entries with BM25 scores
     """
-    if entries is None:
-        entries = get_all_entries_for_bm25()
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    if not entries:
-        return []
-
+    # Tokenize query to construct FTS MATCH expression
     query_tokens = tokenize(query)
     if not query_tokens:
         return []
 
-    # Tokenize all documents
-    doc_tokens_list = [tokenize(e['content']) for e in entries]
+    # Use OR to match standard BM25 behavior (any term matches)
+    fts_query = " OR ".join(query_tokens)
 
-    if HAS_BM25:
-        # Use rank_bm25 library
-        bm25 = BM25Okapi(doc_tokens_list)
-        scores = bm25.get_scores(query_tokens)
-    else:
-        # Fall back to simple BM25
-        avg_doc_len = sum(len(d) for d in doc_tokens_list) / len(doc_tokens_list) if doc_tokens_list else 1
+    # Use bm25() function from FTS5
+    # Note: SQLite bm25() returns negative values where lower (more negative) is better.
+    # We select rank to sort by it.
+    sql = '''
+        SELECT m.id, m.type, m.content, m.source, m.importance, m.tags, m.created_at, bm25(memory_entries_fts) as rank
+        FROM memory_entries_fts
+        JOIN memory_entries m ON memory_entries_fts.rowid = m.id
+        WHERE memory_entries_fts MATCH ?
+        AND m.is_active = 1
+    '''
+    params = [fts_query]
 
-        # Calculate document frequencies
-        doc_freqs = Counter()
-        for doc_tokens in doc_tokens_list:
-            unique_tokens = set(doc_tokens)
-            for token in unique_tokens:
-                doc_freqs[token] += 1
+    if entry_type:
+        sql += ' AND m.type = ?'
+        params.append(entry_type)
 
-        scores = []
-        for doc_tokens in doc_tokens_list:
-            score = simple_bm25_score(
-                query_tokens, doc_tokens, avg_doc_len,
-                len(entries), doc_freqs
-            )
-            scores.append(score)
+    sql += ' ORDER BY rank LIMIT ?'
+    params.append(limit)
 
-    # Combine with entries and sort
-    scored_entries = []
-    max_score = max(scores) if scores and max(scores) > 0 else 1
+    try:
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+    except sqlite3.OperationalError as e:
+        # Fallback if FTS table doesn't exist (shouldn't happen with migration)
+        print(f"Warning: FTS search failed ({e}), returning empty result", file=sys.stderr)
+        return []
 
-    for entry, score in zip(entries, scores):
-        if score > 0:
-            # Normalize score to 0-1
-            normalized_score = score / max_score
-            scored_entries.append({
-                **entry,
-                "bm25_score": round(normalized_score, 4),
-                "bm25_raw": round(score, 4)
-            })
+    conn.close()
 
-    scored_entries.sort(key=lambda x: x['bm25_score'], reverse=True)
-    return scored_entries[:limit]
+    if not rows:
+        return []
+
+    # Normalize scores to 0-1 range for compatibility
+    # SQLite BM25 returns negative values. We flip them to positive.
+    scores = [-row['rank'] for row in rows]
+    max_score = max(scores) if scores else 1.0
+
+    results = []
+    for row, score in zip(rows, scores):
+        # Normalize relative to the best match in this set
+        norm_score = score / max_score if max_score > 0 else 0
+
+        entry = dict(row)
+        entry['bm25_score'] = round(norm_score, 4)
+        entry['bm25_raw'] = round(score, 4)
+        del entry['rank']
+
+        # Parse tags if string
+        if isinstance(entry.get('tags'), str):
+             try:
+                 entry['tags'] = json.loads(entry['tags'])
+             except:
+                 pass
+
+        results.append(entry)
+
+    return results
 
 
 def hybrid_search(
@@ -213,21 +182,10 @@ def hybrid_search(
         "results": []
     }
 
-    # Get entries for BM25
-    all_entries = get_all_entries_for_bm25()
-
-    # Filter by type if specified
-    if entry_type:
-        all_entries = [e for e in all_entries if e.get('type') == entry_type]
-
-    if not all_entries:
-        results["message"] = "No entries found"
-        return results
-
     # Keyword-only search
     if keyword_only:
         results["method"] = "keyword_only"
-        bm25_results = bm25_search(query, all_entries, limit=limit)
+        bm25_results = bm25_search(query, limit=limit, entry_type=entry_type)
         results["results"] = [{
             "id": r["id"],
             "type": r["type"],
@@ -255,14 +213,19 @@ def hybrid_search(
 
     # Full hybrid search
     # Step 1: BM25 search (get more candidates than needed)
-    bm25_results = bm25_search(query, all_entries, limit=limit * 3)
+    bm25_results = bm25_search(query, limit=limit * 3, entry_type=entry_type)
     bm25_scores = {r["id"]: r["bm25_score"] for r in bm25_results}
+
+    # Map IDs to entry data for retrieval later
+    entry_map = {r["id"]: r for r in bm25_results}
 
     # Step 2: Semantic search on candidates
     sem_results = semantic_search(query, entry_type=entry_type, limit=limit * 3, threshold=0.2)
     semantic_scores = {}
     if sem_results.get("success"):
-        semantic_scores = {r["id"]: r["similarity"] for r in sem_results.get("results", [])}
+        for r in sem_results.get("results", []):
+            semantic_scores[r["id"]] = r["similarity"]
+            entry_map[r["id"]] = r
 
     # Step 3: Combine scores
     all_ids = set(bm25_scores.keys()) | set(semantic_scores.keys())
@@ -277,7 +240,7 @@ def hybrid_search(
 
         if combined_score >= min_score:
             # Find the entry data
-            entry_data = next((e for e in all_entries if e["id"] == entry_id), None)
+            entry_data = entry_map.get(entry_id)
             if entry_data:
                 combined.append({
                     "id": entry_id,

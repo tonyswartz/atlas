@@ -112,6 +112,47 @@ def get_connection():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_memory_importance ON memory_entries(importance)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_daily_logs_date ON daily_logs(date)')
 
+    # FTS Setup for high-performance search
+    cursor.execute('''
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_entries_fts USING fts5(
+            content, tags, context,
+            content='memory_entries',
+            content_rowid='id'
+        )
+    ''')
+
+    # Triggers to keep FTS index in sync with memory_entries
+    cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS memory_entries_ai AFTER INSERT ON memory_entries BEGIN
+            INSERT INTO memory_entries_fts(rowid, content, tags, context) VALUES (new.id, new.content, new.tags, new.context);
+        END;
+    ''')
+    cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS memory_entries_ad AFTER DELETE ON memory_entries BEGIN
+            INSERT INTO memory_entries_fts(memory_entries_fts, rowid, content, tags, context) VALUES('delete', old.id, old.content, old.tags, old.context);
+        END;
+    ''')
+    cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS memory_entries_au AFTER UPDATE ON memory_entries BEGIN
+            INSERT INTO memory_entries_fts(memory_entries_fts, rowid, content, tags, context) VALUES('delete', old.id, old.content, old.tags, old.context);
+            INSERT INTO memory_entries_fts(rowid, content, tags, context) VALUES (new.id, new.content, new.tags, new.context);
+        END;
+    ''')
+
+    # One-time migration to populate FTS index
+    cursor.execute('CREATE TABLE IF NOT EXISTS fts_metadata (key TEXT PRIMARY KEY, value TEXT)')
+
+    # Check if FTS needs initialization
+    cursor.execute("SELECT value FROM fts_metadata WHERE key='fts_initialized'")
+    if not cursor.fetchone():
+        # Check if we have data to index
+        cursor.execute("SELECT COUNT(*) as count FROM memory_entries")
+        if cursor.fetchone()['count'] > 0:
+            print("Optimizing memory database for search... (one-time operation)")
+            cursor.execute("INSERT INTO memory_entries_fts(memory_entries_fts) VALUES('rebuild')")
+
+        cursor.execute("INSERT INTO fts_metadata (key, value) VALUES ('fts_initialized', '1')")
+
     conn.commit()
     return conn
 
