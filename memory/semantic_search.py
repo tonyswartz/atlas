@@ -48,13 +48,15 @@ except ImportError as e:
     sys.exit(1)
 
 
-def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+def cosine_similarity(vec1: List[float], vec2: List[float], mag1: Optional[float] = None, mag2: Optional[float] = None) -> float:
     """
     Calculate cosine similarity between two vectors.
 
     Args:
         vec1: First vector
         vec2: Second vector
+        mag1: Optional pre-calculated magnitude of first vector
+        mag2: Optional pre-calculated magnitude of second vector
 
     Returns:
         Similarity score between -1 and 1
@@ -62,14 +64,17 @@ def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     if len(vec1) != len(vec2):
         raise ValueError("Vectors must have same length")
 
-    dot_product = sum(a * b for a, b in zip(vec1, vec2))
-    magnitude1 = math.sqrt(sum(a * a for a in vec1))
-    magnitude2 = math.sqrt(sum(b * b for b in vec2))
+    if mag1 is None:
+        mag1 = math.sqrt(sum(a * a for a in vec1))
 
-    if magnitude1 == 0 or magnitude2 == 0:
+    if mag2 is None:
+        mag2 = math.sqrt(sum(b * b for b in vec2))
+
+    if mag1 == 0 or mag2 == 0:
         return 0.0
 
-    return dot_product / (magnitude1 * magnitude2)
+    dot_product = sum(a * b for a, b in zip(vec1, vec2))
+    return dot_product / (mag1 * mag2)
 
 
 def get_all_embeddings(
@@ -160,9 +165,13 @@ def semantic_search(
 
     # Calculate similarities
     scored_entries = []
+
+    # Pre-calculate query magnitude to avoid recomputing in loop
+    query_mag = math.sqrt(sum(a * a for a in query_embedding))
+
     for entry in entries:
         if entry.get('embedding'):
-            similarity = cosine_similarity(query_embedding, entry['embedding'])
+            similarity = cosine_similarity(query_embedding, entry['embedding'], mag1=query_mag)
             if similarity >= threshold:
                 scored_entries.append({
                     "id": entry['id'],
@@ -233,9 +242,13 @@ def find_similar(
 
     # Calculate similarities (excluding source)
     scored = []
+
+    # Pre-calculate source magnitude to avoid recomputing in loop
+    source_mag = math.sqrt(sum(a * a for a in source_embedding))
+
     for entry in entries:
         if entry['id'] != entry_id and entry.get('embedding'):
-            similarity = cosine_similarity(source_embedding, entry['embedding'])
+            similarity = cosine_similarity(source_embedding, entry['embedding'], mag1=source_mag)
             if similarity >= threshold:
                 scored.append({
                     "id": entry['id'],
