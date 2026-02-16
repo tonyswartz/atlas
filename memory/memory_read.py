@@ -42,7 +42,7 @@ LOGS_DIR = MEMORY_DIR / "logs"
 # Import memory_db functions
 sys.path.insert(0, str(Path(__file__).parent))
 try:
-    from memory_db import get_recent, list_entries, get_daily_log
+    from memory_db import get_recent, list_entries, get_daily_log, get_daily_logs
 except ImportError:
     # Fallback if running standalone
     def get_recent(hours=24, entry_type=None):
@@ -51,6 +51,8 @@ except ImportError:
         return {"success": False, "entries": []}
     def get_daily_log(date):
         return {"success": False}
+    def get_daily_logs(dates):
+        return {"success": True, "logs": {}}
 
 
 def read_memory_file() -> Dict[str, Any]:
@@ -157,11 +159,63 @@ def read_recent_logs(days: int = 2) -> List[Dict[str, Any]]:
     """
     logs = []
     today = datetime.now().date()
+    dates = [(today - timedelta(days=i)).isoformat() for i in range(days)]
 
-    for i in range(days):
-        date = (today - timedelta(days=i)).isoformat()
-        log = read_daily_log(date)
-        logs.append(log)
+    # Track which logs we've found
+    found_logs = {}
+    missing_dates = []
+
+    # 1. Try file system first
+    for date in dates:
+        log_file = LOGS_DIR / f"{date}.md"
+        if log_file.exists():
+            content = log_file.read_text(encoding='utf-8')
+
+            # Extract key events
+            key_events = []
+            for line in content.split('\n'):
+                line = line.strip()
+                if line.startswith('- ') or line.startswith('* '):
+                    key_events.append(line[2:])
+
+            found_logs[date] = {
+                "success": True,
+                "date": date,
+                "source": "file",
+                "path": str(log_file),
+                "content": content,
+                "key_events": key_events,
+                "last_modified": datetime.fromtimestamp(log_file.stat().st_mtime).isoformat()
+            }
+        else:
+            missing_dates.append(date)
+
+    # 2. Batch fetch missing logs from DB
+    if missing_dates:
+        db_result = get_daily_logs(missing_dates)
+        if db_result.get('success'):
+            db_logs = db_result.get('logs', {})
+            for date, log_data in db_logs.items():
+                if log_data:
+                    found_logs[date] = {
+                        "success": True,
+                        "date": date,
+                        "source": "database",
+                        "content": log_data.get('raw_log', ''),
+                        "summary": log_data.get('summary', ''),
+                        "key_events": json.loads(log_data.get('key_events', '[]') or '[]')
+                    }
+
+    # 3. Assemble final list in order
+    for date in dates:
+        if date in found_logs:
+            logs.append(found_logs[date])
+        else:
+            logs.append({
+                "success": False,
+                "date": date,
+                "error": f"No log found for {date}"
+            })
 
     return logs
 

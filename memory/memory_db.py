@@ -605,6 +605,25 @@ def get_daily_log(date: str) -> Dict[str, Any]:
     return {"success": True, "log": log}
 
 
+def get_daily_logs(dates: List[str]) -> Dict[str, Any]:
+    """Get multiple daily logs by dates."""
+    if not dates:
+        return {"success": True, "logs": {}}
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    placeholders = ','.join('?' * len(dates))
+    cursor.execute(f'SELECT * FROM daily_logs WHERE date IN ({placeholders})', dates)
+    rows = cursor.fetchall()
+
+    logs = {row['date']: row_to_dict(row) for row in rows}
+
+    conn.close()
+
+    return {"success": True, "logs": logs}
+
+
 def store_embedding(entry_id: int, embedding: bytes, model: str = 'text-embedding-3-small') -> Dict[str, Any]:
     """
     Store an embedding for a memory entry.
