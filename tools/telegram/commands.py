@@ -215,17 +215,18 @@ ROTARY_AGENDA_DIRECTIVE = """You are helping the user with Rotary meeting agenda
   5. Call rotary_save_agenda with the COMPLETE updated content (all sections intact)
 - NEVER call rotary_save_agenda without reading the existing content first
 - NEVER save partial content - you must preserve ALL sections of the agenda
-- Reply: "Added to 2/10 agenda ✓"
+- Reply with the actual meeting date you used, e.g. "Added to 2/17 agenda ✓" (use the real date from meeting_date, never a hardcoded 2/10)
 
-**If the user says just "/rotary" or "/rotary create":**
-- This is FULL INTERACTIVE workflow:
+**If the user says just "/rotary" or "/rotary create" (no "add", no other content):**
+- This is FULL INTERACTIVE workflow — do NOT reply "Added to ...". Instead:
   1. Call rotary_read_log to get next meeting date, spotlight, speaker
   2. Confirm: "Creating agenda for [date]. Member spotlight: [name]. Speaker: [name] — [topic]. Sound good?"
   3. Ask one by one: guests? president announcements? member announcements? speaker bio? notes?
-  4. Call rotary_read_template to get template
-  5. Fill template with all collected info
-  6. Call rotary_save_agenda with complete content
-  7. Reply: "Agenda saved ✓ → [path]"
+  4. **Speaker LinkedIn:** When you have the speaker's name (from the log or from the user): (a) Call browser_search with a query that prefers local profiles, e.g. "[Speaker full name] LinkedIn Ellensburg" or "[Speaker full name] LinkedIn Yakima". Prefer results that mention Ellensburg, Yakima, or Central Washington. (b) When you find a likely profile URL (linkedin.com/in/...), use the browser tool (it uses Safari; the user is logged into LinkedIn there): navigate to that URL, then snapshot to scrape the page. Extract headline, about, or role from the scraped content and add both the profile URL and a short bio to the speaker bio section of the agenda.
+  5. Call rotary_read_template to get template
+  6. Fill template with all collected info (including speaker LinkedIn URL and scraped bio if found)
+  7. Call rotary_save_agenda with complete content
+  8. Reply: "Agenda saved ✓ → [path]"
 
 Keep it conversational. For quick adds, just do it - don't ask for confirmation."""
 

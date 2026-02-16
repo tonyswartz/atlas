@@ -97,6 +97,12 @@ def _save_session(user_id: int) -> None:
         logger.warning("Failed to save session for user %d: %s", user_id, e)
 
 
+def _save_sessions() -> None:
+    """Persist all in-memory sessions to DB (e.g. before returning a loop-detection message)."""
+    for uid in _sessions:
+        _save_session(uid)
+
+
 def _delete_session(user_id: int) -> None:
     """Remove a user's session from DB."""
     try:
