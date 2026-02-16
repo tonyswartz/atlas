@@ -42,6 +42,9 @@ def init_conversation_tables():
         )
     """)
 
+    # Add index on timestamp for performance
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_conversation_turns_timestamp ON conversation_turns(timestamp)")
+
     # User corrections table
     conn.execute("""
         CREATE TABLE IF NOT EXISTS user_corrections (
