@@ -18,6 +18,9 @@ env/
 
 # Local/temporary
 .tmp/
+
+# Backups (large archives; keep locally only)
+backups/
 *.log
 logs/*.log
 memory/logs/*.log
