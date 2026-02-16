@@ -87,12 +87,12 @@ def _load_system_prompt(memory_context: str) -> str:
     return prompt
 
 
-def _load_memory() -> str:
+async def _load_memory() -> str:
     """Run memory_read and return a formatted string for the system prompt."""
     config = load_config()
     mem_cfg = config.get("memory", {})
 
-    result = tool_runner.execute("memory_read", {
+    result = await tool_runner.execute("memory_read", {
         "format": "json",
         "include_db": mem_cfg.get("load_db_entries", True),
         "days": mem_cfg.get("log_days", 2),
@@ -390,7 +390,7 @@ async def handle_message(text: str, user_id: int) -> str:
 
     # --- Session init (or re-init after restart with persisted messages) ---
     if user_id not in _sessions or not _sessions[user_id].get("memory_loaded"):
-        memory_text = _load_memory()
+        memory_text = await _load_memory()
         system_prompt = _load_system_prompt(memory_text)
         if user_id in _sessions:
             # Restored from disk — keep messages, attach fresh prompt
@@ -417,16 +417,16 @@ async def handle_message(text: str, user_id: int) -> str:
     # DDG (browser_search) is free and tried first. Brave (web_search) is the paid fallback.
     if _is_web_search_intent(text):
         query = _derive_search_query(text)
-        search_result = tool_runner.execute("browser_search", {"query": query, "count": 5})
+        search_result = await tool_runner.execute("browser_search", {"query": query, "count": 5})
         used_tool = "browser_search"
         # If DDG failed, fall back to Brave
         try:
             parsed = json.loads(search_result)
             if not parsed.get("ok") or not parsed.get("results"):
-                search_result = tool_runner.execute("web_search", {"query": query, "count": 5})
+                search_result = await tool_runner.execute("web_search", {"query": query, "count": 5})
                 used_tool = "web_search"
         except (json.JSONDecodeError, KeyError):
-            search_result = tool_runner.execute("web_search", {"query": query, "count": 5})
+            search_result = await tool_runner.execute("web_search", {"query": query, "count": 5})
             used_tool = "web_search"
 
         tool_call_id = "prefetch-web-search"
@@ -464,7 +464,7 @@ async def handle_message(text: str, user_id: int) -> str:
             "tool_calls": assistant_tool_calls,
         })
         for fid, (name, args) in zip(prefetch_ids, prefetch_calls):
-            result = tool_runner.execute(name, args)
+            result = await tool_runner.execute(name, args)
             session["messages"].append({"role": "tool", "tool_call_id": fid, "content": result})
 
     # --- Prefetch for "what's today" / "what do I have today" ---
@@ -484,7 +484,7 @@ async def handle_message(text: str, user_id: int) -> str:
         session["messages"].append({
             "role": "tool",
             "tool_call_id": tid,
-            "content": tool_runner.execute("reminders_read", {}),
+            "content": await tool_runner.execute("reminders_read", {}),
         })
 
     # --- Prefetch for "remind me to ..." ---
@@ -503,15 +503,15 @@ async def handle_message(text: str, user_id: int) -> str:
         session["messages"].append({
             "role": "tool",
             "tool_call_id": tid,
-            "content": tool_runner.execute("reminders_read", {}),
+            "content": await tool_runner.execute("reminders_read", {}),
         })
 
     # --- Bambu/printer questions → deterministic handler ---
     # The local 7B model loops infinitely on the bambu tool. Answer directly from data.
     # Try MiniMax first for natural phrasing; fall back to deterministic formatter.
     if _is_bambu_intent(text):
-        status_result = tool_runner.execute("bambu", {"action": "status"})
-        ams_result = tool_runner.execute("bambu", {"action": "ams"})
+        status_result = await tool_runner.execute("bambu", {"action": "status"})
+        ams_result = await tool_runner.execute("bambu", {"action": "ams"})
         state_path = REPO_ROOT / "data" / "bambu_last_state.json"
         try:
             live = json.loads(status_result)
@@ -696,7 +696,7 @@ async def handle_message(text: str, user_id: int) -> str:
                 args = {}
 
             logger.info("Tool call round %d: %s(%s)", _round, tc.function.name, tc.function.arguments[:120])
-            result_str = tool_runner.execute(tc.function.name, args)
+            result_str = await tool_runner.execute(tc.function.name, args)
 
             tool_result_msg = {
                 "role": "tool",

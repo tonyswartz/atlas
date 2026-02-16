@@ -8,6 +8,7 @@ All subprocess calls use arg lists (never shell=True) to prevent injection.
 Tool failures return a generic user-facing message; real errors are logged.
 """
 
+import asyncio
 import csv
 import json
 import logging
@@ -91,11 +92,18 @@ def _parse_output(stdout: str) -> str:
     return stdout.strip()
 
 
-def execute(tool_name: str, tool_input: dict) -> str:
+async def execute(tool_name: str, tool_input: dict) -> str:
     """
     Execute a tool by name with the given input dict from Claude's tool_use block.
 
     Returns a string result to feed back to Claude as a tool_result.
+    """
+    return await asyncio.to_thread(_execute_sync, tool_name, tool_input)
+
+
+def _execute_sync(tool_name: str, tool_input: dict) -> str:
+    """
+    Synchronous implementation of tool execution.
     """
     try:
         if tool_name == "memory_read":
