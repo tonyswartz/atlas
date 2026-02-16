@@ -12,7 +12,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import urllib.request
-import urllib.error
 import urllib.parse
 
 # Config
