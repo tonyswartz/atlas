@@ -25,7 +25,8 @@ Master list of tools and their functions. Before writing new code, check this li
 | `tools/telegram/config.py` | Loads `args/telegram.yaml` and `.env` into a cached runtime config dict. |
 | `tools/telegram/mock_chat_test.py` | Mock chat: runs realistic user questions through the handler, records tools (ATLAS_TEST_RECORD_TOOLS=1), checks no errors and expected tools. Use DRY_RUN=1 for tool-only check without LLM. |
 | `tools/telegram/commands.py` | Slash-command router — intercepts /commands before the LLM. Captures (/random /travel /food etc), /rotary agenda gen, /run, /help. |
-| `tools/telegram/bot_health_monitor.py` | Self-healing monitor (every 10 min via launchd): detects tool loops, session bloat, bot crashes; auto-clears stuck sessions, restarts bot, sends alerts. Prevents "[Tools were used.]" loops from persisting. |
+| `tools/telegram/bot_health_monitor.py` | Self-healing monitor (every 10 min via launchd): detects tool loops, session bloat, bot crashes; auto-clears stuck sessions, restarts bot, sends alerts. **AUTO-REPAIR**: tracks failures, triggers MiniMax auto-fixer when same tool fails 3+ times in 6 hours. |
+| `tools/telegram/auto_fixer.py` | Autonomous code repair: uses MiniMax to diagnose failing tools, generates fixes, creates backups, validates syntax, deploys repairs. Triggered automatically by bot_health_monitor.py. |
 
 ## Bambu / 3D Printing (`tools/bambu/`)
 

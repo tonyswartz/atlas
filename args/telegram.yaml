@@ -60,3 +60,15 @@ bot:
     code: -5181994146  # Coding group - for /build and /code commands
     daily: -5254628791  # Daily group - for briefings
     bambu: -5286539940  # Bambu group - for 3D printer notifications
+
+  # Auto-fix configuration (autonomous code repair via MiniMax)
+  auto_fix:
+    enabled: true  # Master switch for autonomous code repair
+    failures_threshold: 3  # Trigger after N failures
+    time_window_hours: 6  # Within this time window
+    # When a tool fails 3+ times in 6 hours, MiniMax will:
+    # 1. Diagnose the root cause
+    # 2. Generate a fix
+    # 3. Create backup of original code
+    # 4. Apply and validate the fix
+    # 5. Send detailed report via Telegram
