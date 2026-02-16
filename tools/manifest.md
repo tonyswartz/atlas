@@ -65,6 +65,7 @@ Master list of tools and their functions. Before writing new code, check this li
 
 | Tool | Description |
 |------|-------------|
+| `tools/rotary/weekly_prompt.py` | Sunday 5pm (launchd): sends Telegram reminder to create Tuesday's Rotary meeting agenda via /rotary command. Calculates next Tuesday's date automatically. |
 | `tools/rotary/print_agenda.py` | Tuesday 4pm (launchd): if this week's agenda is completed, converts it to PDF (one page, markdown formatted) and prints to Brother MFC-L3780CDW; sends Telegram when done. Run with `--dry-run` to test. |
 
 ## Legal & Case Law (`tools/legal/`)
