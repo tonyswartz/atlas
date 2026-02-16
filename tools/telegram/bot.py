@@ -12,6 +12,7 @@ import os
 import sys
 import asyncio
 import logging
+import re
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -229,17 +230,28 @@ async def _keep_typing(chat, stop_event):
 
 
 def _escape_markdown(text: str) -> str:
-    """Prepare reply for Telegram parse_mode=Markdown: allow bold/italic, but prevent '[date]' or '[LK-511]'
-    from being parsed as links (which causes 'Can't parse entities'). Escapes \\ and [; normalizes ** to *."""
+    """Prepare reply for Telegram parse_mode=Markdown: allow bold/italic/links, but prevent '[date]' or '[LK-511]'
+    from being parsed as links (which causes 'Can't parse entities'). Escapes \\ and [ unless part of a link; normalizes ** to *."""
     if not text:
         return text
     # Backslash first so we don't double-escape
     text = text.replace("\\", "\\\\")
     # Telegram uses single * for bold; model often outputs **. Normalize so **bold** -> *bold*
     text = text.replace("**", "*")
-    # Escape [ so [26-02-03] and [LK-511] don't start a link (Telegram expects [text](url))
-    text = text.replace("[", "\\[")
-    return text
+
+    # Split by markdown links: [text](url)
+    # This regex matches [text](url) structure
+    link_pattern = re.compile(r'(\[[^\]\n]+\]\([^)\n]+\))')
+    parts = link_pattern.split(text)
+
+    # parts will be [text, link, text, link, text]
+    for i, part in enumerate(parts):
+        if i % 2 == 0: # This is text, not a link
+            # Escape [ so [26-02-03] don't start a link
+            parts[i] = part.replace("[", "\\[")
+        # else: it's a link, leave it alone
+
+    return "".join(parts)
 
 
 async def _post_init(application) -> None:
