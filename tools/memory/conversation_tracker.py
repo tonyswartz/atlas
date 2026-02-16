@@ -11,16 +11,22 @@ import sqlite3
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from zoneinfo import ZoneInfo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MEMORY_DB = REPO_ROOT / "data" / "memory.db"
 TZ = ZoneInfo("America/Los_Angeles")
 
+_INITIALIZED_DBS: Set[Path] = set()
+
 
 def init_conversation_tables():
     """Initialize conversation tracking tables if they don't exist."""
+    global _INITIALIZED_DBS
+    if MEMORY_DB in _INITIALIZED_DBS:
+        return
+
     conn = sqlite3.connect(MEMORY_DB)
 
     # Conversation turns table
@@ -62,6 +68,7 @@ def init_conversation_tables():
 
     conn.commit()
     conn.close()
+    _INITIALIZED_DBS.add(MEMORY_DB)
 
 
 def log_conversation_turn(
