@@ -25,6 +25,7 @@ memory/logs/*.log
 # Data and state (local dbs and runtime state)
 data/*.db
 data/*.json
+data/*.migrated
 !data/.gitkeep
 
 # IDE
