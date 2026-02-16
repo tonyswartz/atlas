@@ -330,11 +330,15 @@ HELP_TEXT = """\
 /reminder <task> [schedule] — Add to Reminders
 /rotary — Generate next Rotary agenda
 /trial [name] — Start DUI trial prep
+/code — Create a coding task
 /task <desc> [$budget] [@project] — Create task
 /tasks [filter] — List tasks
 /approve <id> — Approve task
 /cancel <id> — Cancel task
 /status <id> — Task status
+
+🛠️ Script Builder
+/build [description] — Create & schedule custom scripts
 
 ⚙️ System & Tools
 /run <script> — Run daily brief, news, etc.

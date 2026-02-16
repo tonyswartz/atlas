@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.atlas.git-sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>/Users/printer/atlas/tools/system/git_sync_and_restart.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/printer/atlas</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>0</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/printer/atlas/logs/git-sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/printer/atlas/logs/git-sync.log</string>
+</dict>
+</plist>

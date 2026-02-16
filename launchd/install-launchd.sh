@@ -13,6 +13,8 @@ LABELS=(
   com.atlas.bambu-watcher
   com.atlas.bambu-watcher-health
   com.atlas.daily-brief
+  com.atlas.git-sync
+  com.atlas.git-sync-deferred-restart
   com.atlas.wa-dui-bill-tracker
   com.atlas.local-news
   com.atlas.research-brief

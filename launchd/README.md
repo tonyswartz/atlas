@@ -24,6 +24,8 @@ This copies plists to `~/Library/LaunchAgents/` and loads them. Logs go to `atla
 | com.atlas.research-brief | 15:00 | Research brief |
 | com.atlas.rotary-print-agenda | Tue 16:00 | Print Rotary agenda (if completed) to Brother MFC-L3780CDW; Telegram when done |
 | com.atlas.watchdog | 6:05 | Scans logs for errors, Telegram alert |
+| com.atlas.git-sync | 0:00 (midnight) | Git fetch/pull/push; restart Telegram bot if idle (else set pending) |
+| com.atlas.git-sync-deferred-restart | Every 10 min | If sync skipped restart due to busy bot, restart when idle |
 
 **Kanban runner** is not in Atlas (lives in clawd); keep that in crontab or add a separate launchd plist there.
 

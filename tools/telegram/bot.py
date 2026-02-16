@@ -22,13 +22,16 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters
 from telegram.constants import ChatAction
 
-from config import load_config
+from config import load_config, get_repo_root
 from conversation import handle_message, reset_session, handle_models_command
 from commands import route as route_command, get_trial_prep_message, get_code_directive, get_rotary_directive, get_schedule_directive, get_episode_directive, get_build_directive, trigger_restart, can_restart
 from group_manager import register_chat
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+# Used by git_sync_and_restart to avoid restarting while the bot is handling a message
+BOT_BUSY_FILE = get_repo_root() / "data" / "bot_busy_since"
 
 
 @asynccontextmanager
@@ -331,6 +334,13 @@ async def on_message(update: Update, context) -> None:
         typing_task = asyncio.create_task(_keep_typing(update.message.chat, stop_typing))
 
     try:
+        # Signal that we're handling a message (for git_sync_and_restart: don't restart mid-turn)
+        try:
+            BOT_BUSY_FILE.parent.mkdir(parents=True, exist_ok=True)
+            BOT_BUSY_FILE.touch()
+        except OSError:
+            pass
+
         # --- Handle /reset and /new (clear session, fresh context on next message) ---
         if update.message.text.strip().lower() in ("/reset", "/clear", "/new"):
             reset_session(user_id)
@@ -371,6 +381,12 @@ async def on_message(update: Update, context) -> None:
         logger.exception("Error handling message")
         await update.message.reply_text(_escape_markdown(f"Couldn't do that: {e}"), parse_mode="Markdown")
     finally:
+        # Clear busy indicator so git_sync can restart when idle
+        try:
+            if BOT_BUSY_FILE.exists():
+                BOT_BUSY_FILE.unlink()
+        except OSError:
+            pass
         # Stop typing indicator
         if typing_task:
             stop_typing.set()
