@@ -26,6 +26,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.append(str(REPO_ROOT))
 
 import memory.memory_read
+import memory.memory_write
 
 
 def _resolve_path(key: str, default: Path) -> Path:
@@ -215,30 +216,47 @@ async def _memory_read(inp: dict) -> str:
 
 
 async def _memory_write(inp: dict) -> str:
-    args = [sys.executable, "memory/memory_write.py"]
+    """
+    Directly call memory.memory_write functions to avoid subprocess overhead.
+    """
+    def write_op():
+        try:
+            content = inp["content"]
+            # Handle MEMORY.md update
+            if inp.get("update_memory_md"):
+                section = inp.get("section", "key_facts")
+                result = memory.memory_write.append_to_memory_file(content, section)
+            else:
+                tags_raw = inp.get("tags")
+                tags = tags_raw.split(',') if tags_raw else None
+                entry_type = inp.get("type", "fact")
 
-    args.extend(["--content", inp["content"]])
+                # replicate logic from memory_write.py
+                if entry_type == 'note':
+                    result = memory.memory_write.append_to_daily_log(
+                        content=content,
+                        entry_type='note',
+                        timestamp=True,
+                        category=tags[0] if tags else None
+                    )
+                else:
+                    result = memory.memory_write.write_to_memory(
+                        content=content,
+                        entry_type=entry_type,
+                        source=inp.get("source", "session"),
+                        importance=int(inp.get("importance", 5)),
+                        tags=tags,
+                        context=inp.get("context"),
+                        log_to_file=True,
+                        add_to_db=True
+                    )
 
-    if "type" in inp:
-        args.extend(["--type", inp["type"]])
-    if "importance" in inp:
-        args.extend(["--importance", str(inp["importance"])])
-    if "source" in inp:
-        args.extend(["--source", inp["source"]])
-    if "tags" in inp:
-        args.extend(["--tags", inp["tags"]])
+            return json.dumps(result, indent=2, default=str)
+        except Exception as e:
+            logger.exception("memory_write direct call failed")
+            return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
-    # Persist to MEMORY.md if requested
-    if inp.get("update_memory_md"):
-        args.append("--update-memory")
-        if "section" in inp:
-            args.extend(["--section", inp["section"]])
-
-    result = await _run(args)
-    if result.returncode != 0:
-        logger.warning("memory_write failed: %s", result.stderr.strip())
-        return json.dumps({"success": False, "error": USER_FACING_ERROR})
-    return _parse_output(result.stdout)
+    return await asyncio.to_thread(write_op)
 
 
 async def _memory_search(inp: dict) -> str:

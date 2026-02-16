@@ -81,31 +81,32 @@ def handle_snapshot(body: dict) -> dict:
     return {"ok": True, "title": title, "url": driver.current_url, "content": content}
 
 
-def handle_click(body: dict) -> dict:
+def _find_element(driver, body: dict):
     selector = body.get("selector")
     if not selector:
-        return {"ok": False, "error": "Missing selector"}
+        raise ValueError("Missing selector")
     by = body.get("by", "css")  # css, xpath, id, name
-    driver = get_driver()
     from selenium.webdriver.common.by import By
     by_map = {"css": By.CSS_SELECTOR, "xpath": By.XPATH, "id": By.ID, "name": By.NAME}
     by_enum = by_map.get(by.lower(), By.CSS_SELECTOR)
-    el = driver.find_element(by_enum, selector)
+    return driver.find_element(by_enum, selector)
+
+
+def handle_click(body: dict) -> dict:
+    if not body.get("selector"):
+        return {"ok": False, "error": "Missing selector"}
+    driver = get_driver()
+    el = _find_element(driver, body)
     el.click()
     return {"ok": True, "message": "Clicked"}
 
 
 def handle_type(body: dict) -> dict:
-    selector = body.get("selector")
-    text = body.get("text", "")
-    if not selector:
+    if not body.get("selector"):
         return {"ok": False, "error": "Missing selector"}
-    by = body.get("by", "css")
+    text = body.get("text", "")
     driver = get_driver()
-    from selenium.webdriver.common.by import By
-    by_map = {"css": By.CSS_SELECTOR, "xpath": By.XPATH, "id": By.ID, "name": By.NAME}
-    by_enum = by_map.get(by.lower(), By.CSS_SELECTOR)
-    el = driver.find_element(by_enum, selector)
+    el = _find_element(driver, body)
     el.clear()
     el.send_keys(text)
     return {"ok": True, "message": "Typed"}
