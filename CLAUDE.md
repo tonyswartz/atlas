@@ -123,6 +123,85 @@ The system uses **specialized subagents** for complex domains:
 
 # **How to Operate**
 
+### **0. Git Workflow - Always Start Fresh**
+
+**CRITICAL: Before starting any work, ensure your local repository is up to date.**
+
+```bash
+git pull
+```
+
+This prevents:
+- Working on stale code that's been updated upstream
+- Merge conflicts from divergent changes
+- Implementing features that already exist
+- Overwriting recent fixes or improvements
+
+**When to commit changes:**
+
+1. **After completing a feature or fix** - Don't leave uncommitted work
+   - New functionality is working and tested
+   - Bug fixes are verified
+   - Scripts are executable and functional
+   - Documentation is updated
+
+2. **When asked by the user** - "commit this", "save these changes", etc.
+
+3. **Before switching contexts** - If moving to a different task or agent
+
+4. **Logical completion points** - End of a coherent unit of work
+
+**When NOT to commit:**
+
+- Work in progress that doesn't run or isn't complete
+- Experimental code you're still debugging
+- Temporary debugging statements or test files
+- When explicitly told "don't commit yet"
+
+**Commit message guidelines:**
+
+```bash
+# Good commit format:
+git add <files>
+git commit -m "$(cat <<'EOF'
+Brief summary of what changed (under 70 chars)
+
+Detailed explanation of:
+- What was changed and why
+- Key files modified
+- Any new functionality or fixes
+- Known limitations or future work
+
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+EOF
+)"
+```
+
+**Example workflow:**
+```bash
+# Start of session
+git pull
+
+# ... do work ...
+
+# When feature is complete:
+git status
+git diff  # Review changes
+git add <relevant files>
+git commit -m "Add /build command with modification detection..."
+
+# Only push if explicitly asked or it's a deployment workflow
+# git push
+```
+
+**Emergency conflicts:**
+If `git pull` shows conflicts:
+1. Show the user which files conflict
+2. Ask how they want to proceed
+3. Never force-push or discard changes without explicit permission
+
+---
+
 ### **1. Route to the right agent (if applicable)**
 
 Before starting a task, determine if it belongs to a specific agent domain:
