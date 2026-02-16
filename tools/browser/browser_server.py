@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Lock
@@ -208,6 +209,18 @@ _ACTIONS = {
 
 class BrowserHandler(BaseHTTPRequestHandler):
     def do_POST(self):
+        # Authenticate if BROWSER_SERVER_AUTH_TOKEN is set
+        expected_token = os.environ.get("BROWSER_SERVER_AUTH_TOKEN")
+        if expected_token:
+            auth_header = self.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                self._send_json(401, {"ok": False, "error": "Unauthorized: Missing Bearer token"})
+                return
+            client_token = auth_header.split(" ", 1)[1]
+            if not secrets.compare_digest(client_token, expected_token):
+                self._send_json(401, {"ok": False, "error": "Unauthorized: Invalid token"})
+                return
+
         if self.path != "/" and self.path != "/action":
             self.send_error(404)
             return
