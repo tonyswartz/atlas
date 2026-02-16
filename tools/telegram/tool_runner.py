@@ -8,6 +8,7 @@ All subprocess calls use arg lists (never shell=True) to prevent injection.
 Tool failures return a generic user-facing message; real errors are logged.
 """
 
+import asyncio
 import csv
 import json
 import logging
@@ -48,9 +49,10 @@ logger = logging.getLogger(__name__)
 USER_FACING_ERROR = "Operation failed. Please try again."
 
 
-def _run(args: list, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess:
+async def _run(args: list, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess:
     """Run a subprocess with the given args. Returns the CompletedProcess."""
-    return subprocess.run(
+    return await asyncio.to_thread(
+        subprocess.run,
         args,
         capture_output=True,
         text=True,
@@ -91,7 +93,7 @@ def _parse_output(stdout: str) -> str:
     return stdout.strip()
 
 
-def execute(tool_name: str, tool_input: dict) -> str:
+async def execute(tool_name: str, tool_input: dict) -> str:
     """
     Execute a tool by name with the given input dict from Claude's tool_use block.
 
@@ -99,59 +101,59 @@ def execute(tool_name: str, tool_input: dict) -> str:
     """
     try:
         if tool_name == "memory_read":
-            return _memory_read(tool_input)
+            return await _memory_read(tool_input)
         elif tool_name == "memory_write":
-            return _memory_write(tool_input)
+            return await _memory_write(tool_input)
         elif tool_name == "memory_search":
-            return _memory_search(tool_input)
+            return await _memory_search(tool_input)
         elif tool_name == "memory_db":
-            return _memory_db(tool_input)
+            return await _memory_db(tool_input)
         elif tool_name == "read_goal":
-            return _read_goal(tool_input)
+            return await _read_goal(tool_input)
         elif tool_name == "journal_read_recent":
-            return _journal_read_recent(tool_input)
+            return await _journal_read_recent(tool_input)
         elif tool_name == "reminders_read":
-            return _reminders_read()
+            return await _reminders_read()
         elif tool_name == "heartbeat_read":
-            return _heartbeat_read()
+            return await _heartbeat_read()
         elif tool_name == "trial_read_guide":
-            return _trial_read_guide()
+            return await _trial_read_guide()
         elif tool_name == "trial_list_cases":
-            return _trial_list_cases()
+            return await _trial_list_cases()
         elif tool_name == "trial_list_templates":
-            return _trial_list_templates()
+            return await _trial_list_templates()
         elif tool_name == "trial_read_template":
-            return _trial_read_template(tool_input)
+            return await _trial_read_template(tool_input)
         elif tool_name == "trial_save_document":
-            return _trial_save_document(tool_input)
+            return await _trial_save_document(tool_input)
         elif tool_name == "read_file":
-            return _read_file(tool_input)
+            return await _read_file(tool_input)
         elif tool_name == "list_files":
-            return _list_files(tool_input)
+            return await _list_files(tool_input)
         elif tool_name == "reminder_add":
-            return _reminder_add(tool_input)
+            return await _reminder_add(tool_input)
         elif tool_name == "bambu":
-            return _bambu(tool_input)
+            return await _bambu(tool_input)
         elif tool_name == "browser_search":
-            return _browser_search(tool_input)
+            return await _browser_search(tool_input)
         elif tool_name == "run_tool":
-            return _run_tool(tool_input)
+            return await _run_tool(tool_input)
         elif tool_name == "browser":
-            return _browser(tool_input)
+            return await _browser(tool_input)
         elif tool_name == "web_search":
-            return _web_search(tool_input)
+            return await _web_search(tool_input)
         elif tool_name == "system_config":
-            return _system_config(tool_input)
+            return await _system_config(tool_input)
         elif tool_name == "telegram_groups":
-            return _telegram_groups(tool_input)
+            return await _telegram_groups(tool_input)
         elif tool_name == "conversation_context":
-            return _conversation_context(tool_input)
+            return await _conversation_context(tool_input)
         elif tool_name == "proactive_intelligence":
-            return _proactive_intelligence(tool_input)
+            return await _proactive_intelligence(tool_input)
         elif tool_name == "log_correction":
-            return _log_correction(tool_input)
+            return await _log_correction(tool_input)
         elif tool_name in _ZAPIER_TOOLS:
-            return _zapier(tool_name, tool_input)
+            return await _zapier(tool_name, tool_input)
         else:
             return json.dumps({"success": False, "error": USER_FACING_ERROR})
     except Exception as e:
@@ -163,7 +165,7 @@ def execute(tool_name: str, tool_input: dict) -> str:
 # Individual tool translators
 # ---------------------------------------------------------------------------
 
-def _memory_read(inp: dict) -> str:
+async def _memory_read(inp: dict) -> str:
     """
     Directly call memory.memory_read.load_all_memory to avoid subprocess overhead.
     """
@@ -178,7 +180,9 @@ def _memory_read(inp: dict) -> str:
         log_days = int(inp.get("days", 2))
 
         # Call directly
-        context = memory.memory_read.load_all_memory(
+        # Use asyncio.to_thread because load_all_memory does blocking I/O
+        context = await asyncio.to_thread(
+            memory.memory_read.load_all_memory,
             include_memory=include_memory,
             include_logs=include_logs,
             include_db=include_db,
@@ -210,7 +214,7 @@ def _memory_read(inp: dict) -> str:
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
 
-def _memory_write(inp: dict) -> str:
+async def _memory_write(inp: dict) -> str:
     args = [sys.executable, "memory/memory_write.py"]
 
     args.extend(["--content", inp["content"]])
@@ -230,14 +234,14 @@ def _memory_write(inp: dict) -> str:
         if "section" in inp:
             args.extend(["--section", inp["section"]])
 
-    result = _run(args)
+    result = await _run(args)
     if result.returncode != 0:
         logger.warning("memory_write failed: %s", result.stderr.strip())
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
     return _parse_output(result.stdout)
 
 
-def _memory_search(inp: dict) -> str:
+async def _memory_search(inp: dict) -> str:
     args = [sys.executable, "memory/hybrid_search.py"]
 
     args.extend(["--query", inp["query"]])
@@ -249,14 +253,14 @@ def _memory_search(inp: dict) -> str:
     if "type" in inp:
         args.extend(["--type", inp["type"]])
 
-    result = _run(args)
+    result = await _run(args)
     if result.returncode != 0:
         logger.warning("memory_search failed: %s", result.stderr.strip())
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
     return _parse_output(result.stdout)
 
 
-def _memory_db(inp: dict) -> str:
+async def _memory_db(inp: dict) -> str:
     args = [sys.executable, "memory/memory_db.py"]
 
     args.extend(["--action", inp["action"]])
@@ -272,14 +276,14 @@ def _memory_db(inp: dict) -> str:
     if "limit" in inp:
         args.extend(["--limit", str(inp["limit"])])
 
-    result = _run(args)
+    result = await _run(args)
     if result.returncode != 0:
         logger.warning("memory_db failed: %s", result.stderr.strip())
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
     return _parse_output(result.stdout)
 
 
-def _read_goal(inp: dict) -> str:
+async def _read_goal(inp: dict) -> str:
     filename = inp.get("filename", "")
     goals_dir = REPO_ROOT / "goals"
 
@@ -290,7 +294,7 @@ def _read_goal(inp: dict) -> str:
     if not target.exists():
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
-    return target.read_text(encoding="utf-8")
+    return await asyncio.to_thread(target.read_text, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +304,7 @@ def _read_goal(inp: dict) -> str:
 _DEFAULT_JOURNAL_CSV_PATH = Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Journals/journal-entries-2025-01-01-to-2026-01-31.csv")
 
 
-def _journal_read_recent(inp: dict) -> str:
+async def _journal_read_recent(inp: dict) -> str:
     """Read the last N days of journal entries from the Obsidian journal CSV. Read-only."""
     path = _resolve_path("journal_csv", _DEFAULT_JOURNAL_CSV_PATH)
     if not path.exists():
@@ -309,8 +313,11 @@ def _journal_read_recent(inp: dict) -> str:
     days = max(1, min(31, int(inp.get("days", 7))))
 
     try:
-        with path.open(newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
+        def read_csv():
+            with path.open(newline="", encoding="utf-8") as f:
+                return list(csv.DictReader(f))
+
+        rows = await asyncio.to_thread(read_csv)
     except (OSError, csv.Error) as e:
         logger.warning("journal_read_recent failed: %s", e)
         return json.dumps({"success": False, "error": USER_FACING_ERROR, "entries": []})
@@ -348,14 +355,14 @@ _DEFAULT_REMINDERS_PATH = Path("/Users/printer/Library/CloudStorage/Dropbox/Obsi
 _REMINDER_SECTIONS = ["[Shopping]", "[Today]", "[Later This Week]", "[Later This Month]", "[Later Later]"]
 
 
-def _reminders_read() -> str:
+async def _reminders_read() -> str:
     """Read Tony Reminders.md by section. Read-only; same sections as reminder_add."""
     path = _resolve_path("reminders", _DEFAULT_REMINDERS_PATH)
     if not path.exists():
         return json.dumps({"success": True, "message": "Reminders file not found.", "sections": {}})
 
     try:
-        content = path.read_text(encoding="utf-8")
+        content = await asyncio.to_thread(path.read_text, encoding="utf-8")
     except OSError as e:
         logger.warning("reminders_read failed: %s", e)
         return json.dumps({"success": False, "error": USER_FACING_ERROR, "sections": {}})
@@ -383,12 +390,13 @@ HEARTBEAT_MD = REPO_ROOT / "HEARTBEAT.md"
 HEARTBEAT_STATE = REPO_ROOT / "memory" / "heartbeat-state.json"
 
 
-def _heartbeat_read() -> str:
+async def _heartbeat_read() -> str:
     """Read HEARTBEAT.md checklist and heartbeat-state.json. Read-only."""
     checklist = []
     if HEARTBEAT_MD.exists():
         try:
-            lines = HEARTBEAT_MD.read_text(encoding="utf-8").strip().splitlines()
+            content = await asyncio.to_thread(HEARTBEAT_MD.read_text, encoding="utf-8")
+            lines = content.strip().splitlines()
             checklist = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
         except OSError as e:
             logger.warning("heartbeat_read HEARTBEAT.md failed: %s", e)
@@ -396,7 +404,8 @@ def _heartbeat_read() -> str:
     state = {}
     if HEARTBEAT_STATE.exists():
         try:
-            state = json.loads(HEARTBEAT_STATE.read_text(encoding="utf-8"))
+            content = await asyncio.to_thread(HEARTBEAT_STATE.read_text, encoding="utf-8")
+            state = json.loads(content)
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -423,34 +432,44 @@ def _trial_safe_path(*parts: str) -> Path | None:
     return target
 
 
-def _trial_read_guide() -> str:
+async def _trial_read_guide() -> str:
     path = _trial_safe_path("Case Prep Guide.md")
     if not path or not path.is_file():
         return json.dumps({"success": False, "error": "Case Prep Guide not found."})
-    return path.read_text(encoding="utf-8")
+    return await asyncio.to_thread(path.read_text, encoding="utf-8")
 
 
-def _trial_list_cases() -> str:
+async def _trial_list_cases() -> str:
     if not TRIALS_ROOT.exists():
         return json.dumps({"success": False, "error": "Trials folder not found."})
-    out: dict[str, list[str]] = {}
-    for year_dir in sorted(TRIALS_ROOT.iterdir()):
-        if year_dir.is_dir() and year_dir.name.isdigit() and len(year_dir.name) == 4:
-            cases = [d.name for d in year_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
-            if cases:
-                out[year_dir.name] = sorted(cases)
+
+    def list_cases():
+        out: dict[str, list[str]] = {}
+        for year_dir in sorted(TRIALS_ROOT.iterdir()):
+            if year_dir.is_dir() and year_dir.name.isdigit() and len(year_dir.name) == 4:
+                cases = [d.name for d in year_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+                if cases:
+                    out[year_dir.name] = sorted(cases)
+        return out
+
+    out = await asyncio.to_thread(list_cases)
     return json.dumps(out, indent=2)
 
 
-def _trial_list_templates() -> str:
+async def _trial_list_templates() -> str:
     templates_dir = _trial_safe_path("Templates")
     if not templates_dir or not templates_dir.is_dir():
         return json.dumps({"success": False, "error": "Templates folder not found."})
-    names = [f.name for f in templates_dir.iterdir() if f.suffix == ".md"]
+
+    def list_tmpl():
+        names = [f.name for f in templates_dir.iterdir() if f.suffix == ".md"]
+        return names
+
+    names = await asyncio.to_thread(list_tmpl)
     return json.dumps({"templates": sorted(names)})
 
 
-def _trial_read_template(inp: dict) -> str:
+async def _trial_read_template(inp: dict) -> str:
     name = (inp.get("template_name") or "").strip()
     if not name:
         return json.dumps({"success": False, "error": "template_name required."})
@@ -460,10 +479,10 @@ def _trial_read_template(inp: dict) -> str:
     path = _trial_safe_path("Templates", name)
     if not path or not path.is_file():
         return json.dumps({"success": False, "error": f"Template not found: {name}"})
-    return path.read_text(encoding="utf-8")
+    return await asyncio.to_thread(path.read_text, encoding="utf-8")
 
 
-def _trial_save_document(inp: dict) -> str:
+async def _trial_save_document(inp: dict) -> str:
     year = (inp.get("year") or "").strip()
     case_name = (inp.get("case_name") or "").strip()
     doc_name = (inp.get("document_name") or "").strip()
@@ -478,15 +497,18 @@ def _trial_save_document(inp: dict) -> str:
     if not path:
         return json.dumps({"success": False, "error": "Invalid path."})
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        def save():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+
+        await asyncio.to_thread(save)
         return json.dumps({"success": True, "path": str(path)})
     except Exception as e:
         logger.warning("trial_save_document failed: %s", e)
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
 
-def _bambu(inp: dict) -> str:
+async def _bambu(inp: dict) -> str:
     """Query or control Bambu printer via bambu-cli."""
     action = (inp.get("action") or "").strip().lower()
 
@@ -505,7 +527,11 @@ def _bambu(inp: dict) -> str:
         return json.dumps({"success": False, "error": f"Unknown action: {action}"})
 
     try:
-        result = subprocess.run(_CMD_MAP[action], capture_output=True, text=True, timeout=15)
+        # Note: using subprocess.run with timeout=15 in thread
+        def run_cli():
+            return subprocess.run(_CMD_MAP[action], capture_output=True, text=True, timeout=15)
+
+        result = await asyncio.to_thread(run_cli)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         logger.warning("bambu-cli %s failed: %s", action, e)
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
@@ -527,7 +553,7 @@ def _bambu(inp: dict) -> str:
     return json.dumps({"success": True, "action": action, "message": out or f"{action} command sent."})
 
 
-def _browser_search(inp: dict) -> str:
+async def _browser_search(inp: dict) -> str:
     """Search the web via DuckDuckGo HTML endpoint. No API key or browser needed."""
     import re
     import urllib.request
@@ -541,9 +567,13 @@ def _browser_search(inp: dict) -> str:
     encoded = urllib.parse.quote_plus(query)
     url = f"https://html.duckduckgo.com/html/?q={encoded}"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    try:
+
+    def fetch():
         resp = urllib.request.urlopen(req, timeout=15)
-        body = resp.read().decode("utf-8")
+        return resp.read().decode("utf-8")
+
+    try:
+        body = await asyncio.to_thread(fetch)
     except Exception as e:
         logger.warning("browser_search fetch failed: %s", e)
         return json.dumps({"ok": False, "error": f"Search request failed: {e}"})
@@ -566,7 +596,7 @@ def _browser_search(inp: dict) -> str:
     return json.dumps({"ok": True, "query": query, "results": results}, indent=2)
 
 
-def _browser(inp: dict) -> str:
+async def _browser(inp: dict) -> str:
     """Send a browser action to the Safari server. Requires tools/browser/browser_server.py to be running."""
     browser_path = REPO_ROOT / "tools" / "browser" / "browser.py"
     if not browser_path.exists():
@@ -583,13 +613,13 @@ def _browser(inp: dict) -> str:
         args.extend(["--text", inp["text"]])
     if inp.get("max_chars") is not None:
         args.extend(["--max-chars", str(inp["max_chars"])])
-    result = _run(args)
+    result = await _run(args)
     if result.returncode != 0:
         logger.warning("browser failed: %s", result.stderr.strip())
     return _parse_output(result.stdout)
 
 
-def _web_search(inp: dict) -> str:
+async def _web_search(inp: dict) -> str:
     """Search the web via Brave Search API. Requires BRAVE_API_KEY in .env."""
     script_path = REPO_ROOT / "tools" / "research" / "web_search.py"
     if not script_path.exists():
@@ -598,13 +628,13 @@ def _web_search(inp: dict) -> str:
     args = [sys.executable, str(script_path), "--query", inp["query"]]
     if inp.get("count") is not None:
         args.extend(["--count", str(inp["count"])])
-    result = _run(args)
+    result = await _run(args)
     if result.returncode != 0:
         logger.warning("web_search failed: %s", result.stderr.strip())
     return _parse_output(result.stdout)
 
 
-def _read_file(inp: dict) -> str:
+async def _read_file(inp: dict) -> str:
     """Read a file inside the repo. Path traversal guarded to REPO_ROOT."""
     raw = (inp.get("path") or "").strip()
     if not raw:
@@ -623,13 +653,13 @@ def _read_file(inp: dict) -> str:
     if not target.is_file():
         return json.dumps({"success": False, "error": f"File not found: {raw}"})
     try:
-        return target.read_text(encoding="utf-8")
+        return await asyncio.to_thread(target.read_text, encoding="utf-8")
     except OSError as e:
         logger.warning("read_file failed: %s", e)
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
 
-def _list_files(inp: dict) -> str:
+async def _list_files(inp: dict) -> str:
     """List directory contents inside the repo. Path traversal guarded to REPO_ROOT."""
     raw = (inp.get("path") or "").strip()
     target = (REPO_ROOT / raw).resolve() if raw else REPO_ROOT.resolve()
@@ -639,16 +669,21 @@ def _list_files(inp: dict) -> str:
         return json.dumps({"success": False, "error": "Path is outside the repo."})
     if not target.is_dir():
         return json.dumps({"success": False, "error": f"Directory not found: {raw or '(root)'}"})
-    entries = sorted(target.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
-    items = []
-    for p in entries:
-        if p.name.startswith("."):
-            continue
-        items.append({"name": p.name, "type": "dir" if p.is_dir() else "file"})
+
+    def list_dir():
+        entries = sorted(target.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+        items = []
+        for p in entries:
+            if p.name.startswith("."):
+                continue
+            items.append({"name": p.name, "type": "dir" if p.is_dir() else "file"})
+        return items
+
+    items = await asyncio.to_thread(list_dir)
     return json.dumps({"success": True, "path": raw or ".", "entries": items}, indent=2)
 
 
-def _reminder_add(inp: dict) -> str:
+async def _reminder_add(inp: dict) -> str:
     """Add a reminder by calling reminder_add.py as a subprocess."""
     task = (inp.get("task") or "").strip()
     if not task:
@@ -661,7 +696,7 @@ def _reminder_add(inp: dict) -> str:
     args = [sys.executable, str(script), task]
     if schedule:
         args.append(schedule)
-    result = _run(args)
+    result = await _run(args)
     if result.returncode != 0:
         logger.warning("reminder_add failed: %s", result.stderr.strip())
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
@@ -679,7 +714,7 @@ _RUN_TOOL_ALLOWLIST = {
 }
 
 
-def _run_tool(inp: dict) -> str:
+async def _run_tool(inp: dict) -> str:
     script_name = inp.get("script_name", "")
     if script_name not in _RUN_TOOL_ALLOWLIST:
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
@@ -689,7 +724,7 @@ def _run_tool(inp: dict) -> str:
         logger.warning("run_tool script not found: %s", script_path)
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
-    result = _run([sys.executable, str(script_path)])
+    result = await _run([sys.executable, str(script_path)])
     out = (result.stdout or "").strip()
     err = (result.stderr or "").strip()
     if result.returncode != 0:
@@ -702,46 +737,51 @@ def _run_tool(inp: dict) -> str:
 # System configuration and automation
 # ---------------------------------------------------------------------------
 
-def _telegram_groups(inp: dict) -> str:
+async def _telegram_groups(inp: dict) -> str:
     """Query known Telegram groups (autodetected from incoming messages)."""
-    try:
-        from tools.telegram import group_manager
-    except ImportError:
-        sys.path.insert(0, str(REPO_ROOT / "tools" / "telegram"))
-        import group_manager
 
-    action = inp.get("action", "list")
+    # Offload import and execution to thread
+    def run_groups():
+        try:
+            from tools.telegram import group_manager
+        except ImportError:
+            sys.path.insert(0, str(REPO_ROOT / "tools" / "telegram"))
+            import group_manager
 
-    if action == "list":
-        groups = group_manager.list_groups()
-        return json.dumps({
-            "success": True,
-            "count": len(groups),
-            "groups": groups
-        }, indent=2)
+        action = inp.get("action", "list")
 
-    elif action == "find":
-        name = inp.get("name", "")
-        if not name:
-            return json.dumps({"success": False, "error": "name is required for find action"})
-
-        group = group_manager.get_group_by_name(name)
-        if group:
+        if action == "list":
+            groups = group_manager.list_groups()
             return json.dumps({
                 "success": True,
-                "group": group
+                "count": len(groups),
+                "groups": groups
             }, indent=2)
+
+        elif action == "find":
+            name = inp.get("name", "")
+            if not name:
+                return json.dumps({"success": False, "error": "name is required for find action"})
+
+            group = group_manager.get_group_by_name(name)
+            if group:
+                return json.dumps({
+                    "success": True,
+                    "group": group
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "success": False,
+                    "error": f"No group found matching: {name}"
+                })
+
         else:
-            return json.dumps({
-                "success": False,
-                "error": f"No group found matching: {name}"
-            })
+            return json.dumps({"success": False, "error": f"Unknown action: {action}"})
 
-    else:
-        return json.dumps({"success": False, "error": f"Unknown action: {action}"})
+    return await asyncio.to_thread(run_groups)
 
 
-def _script_writer(inp: dict) -> str:
+async def _script_writer(inp: dict) -> str:
     """Generate a Python script from natural language description."""
     script_writer_path = REPO_ROOT / "tools" / "system" / "script_writer.py"
     if not script_writer_path.exists():
@@ -761,7 +801,7 @@ def _script_writer(inp: dict) -> str:
         args.extend(["--schedule", schedule])
 
     # Execute
-    result = _run(args)
+    result = await _run(args)
     out = (result.stdout or "").strip()
     err = (result.stderr or "").strip()
 
@@ -776,7 +816,7 @@ def _script_writer(inp: dict) -> str:
     return out or json.dumps({"success": True})
 
 
-def _conversation_context(inp: dict) -> str:
+async def _conversation_context(inp: dict) -> str:
     """Get conversation history and patterns."""
     tracker_path = REPO_ROOT / "tools" / "memory" / "conversation_tracker.py"
     if not tracker_path.exists():
@@ -792,7 +832,7 @@ def _conversation_context(inp: dict) -> str:
         if "limit" in inp:
             args.extend(["--limit", str(inp["limit"])])
 
-    result = _run(args)
+    result = await _run(args)
     if result.returncode != 0:
         logger.warning("conversation_tracker failed: %s", result.stderr.strip())
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
@@ -800,7 +840,7 @@ def _conversation_context(inp: dict) -> str:
     return result.stdout.strip() or json.dumps({"success": True})
 
 
-def _proactive_intelligence(inp: dict) -> str:
+async def _proactive_intelligence(inp: dict) -> str:
     """Get proactive suggestions and insights."""
     engine_path = REPO_ROOT / "tools" / "intelligence" / "proactive_engine.py"
     if not engine_path.exists():
@@ -813,7 +853,7 @@ def _proactive_intelligence(inp: dict) -> str:
     if action == "intent" and "text" in inp:
         args.extend(["--text", inp["text"]])
 
-    result = _run(args)
+    result = await _run(args)
     if result.returncode != 0:
         logger.warning("proactive_engine failed: %s", result.stderr.strip())
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
@@ -821,12 +861,9 @@ def _proactive_intelligence(inp: dict) -> str:
     return result.stdout.strip() or json.dumps({"success": True})
 
 
-def _log_correction(inp: dict) -> str:
+async def _log_correction(inp: dict) -> str:
     """Log a user correction for learning."""
     try:
-        sys.path.insert(0, str(REPO_ROOT / "tools" / "memory"))
-        from conversation_tracker import log_correction
-
         original = inp.get("original_response", "")
         correction = inp.get("correction", "")
         pattern = inp.get("learned_pattern", "")
@@ -834,13 +871,18 @@ def _log_correction(inp: dict) -> str:
         if not original or not correction:
             return json.dumps({"success": False, "error": "original_response and correction required"})
 
-        log_correction(original, correction, learned_pattern=pattern)
+        def log():
+            sys.path.insert(0, str(REPO_ROOT / "tools" / "memory"))
+            from conversation_tracker import log_correction
+            log_correction(original, correction, learned_pattern=pattern)
+
+        await asyncio.to_thread(log)
 
         # Also save to memory for long-term retention
         memory_write_path = REPO_ROOT / "memory" / "memory_write.py"
         if memory_write_path.exists():
             content = f"Correction learned: {pattern}" if pattern else f"User corrected: {correction}"
-            _run([
+            await _run([
                 sys.executable, str(memory_write_path),
                 "--content", content,
                 "--type", "insight",
@@ -854,7 +896,7 @@ def _log_correction(inp: dict) -> str:
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
 
-def _system_config(inp: dict) -> str:
+async def _system_config(inp: dict) -> str:
     """Route system configuration actions to system_config.py via subprocess."""
     config_script = REPO_ROOT / "tools" / "system" / "system_config.py"
     if not config_script.exists():
@@ -902,7 +944,7 @@ def _system_config(inp: dict) -> str:
             args.extend(["--chat-id", inp["chat_id"]])
 
     # Execute
-    result = _run(args)
+    result = await _run(args)
     out = (result.stdout or "").strip()
     err = (result.stderr or "").strip()
 
@@ -933,14 +975,14 @@ _ZAPIER_TOOLS = {
 }
 
 
-def _zapier(tool_name: str, inp: dict) -> str:
+async def _zapier(tool_name: str, inp: dict) -> str:
     """Route a Zapier tool call to zapier_runner.py via subprocess."""
     runner_path = REPO_ROOT / "tools" / "zapier" / "zapier_runner.py"
     if not runner_path.exists():
         logger.warning("zapier_runner.py not found at %s", runner_path)
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
-    result = _run([sys.executable, str(runner_path), "--tool", tool_name, "--input", json.dumps(inp)])
+    result = await _run([sys.executable, str(runner_path), "--tool", tool_name, "--input", json.dumps(inp)])
     out = (result.stdout or "").strip()
     err = (result.stderr or "").strip()
     if result.returncode != 0:
