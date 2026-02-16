@@ -10,9 +10,10 @@ Detects and automatically fixes common bot issues:
 
 AUTO-REPAIR CAPABILITY:
 - Tracks tool failures over time
-- When same tool fails 3+ times in 6 hours, triggers MiniMax auto-fixer
+- When ANY tool fails 2+ times in 48 hours, triggers MiniMax auto-fixer
 - Creates backups before modifying code
 - Validates fixes before deploying
+- Commits to git for easy rollback
 
 Runs every 5-10 minutes via launchd.
 """
@@ -47,15 +48,15 @@ def _get_auto_fix_config() -> dict:
         config = load_config()
         return config.get("bot", {}).get("auto_fix", {
             "enabled": True,
-            "failures_threshold": 3,
-            "time_window_hours": 6
+            "failures_threshold": 2,
+            "time_window_hours": 48
         })
     except Exception:
         # Fallback to defaults
         return {
             "enabled": True,
-            "failures_threshold": 3,
-            "time_window_hours": 6
+            "failures_threshold": 2,
+            "time_window_hours": 48
         }
 
 AUTO_FIX_CONFIG = _get_auto_fix_config()

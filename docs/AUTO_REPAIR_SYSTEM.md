@@ -13,7 +13,13 @@ The `bot_health_monitor.py` runs every 10 minutes and:
 
 ### 2. Pattern Recognition
 
-When the same tool fails **3+ times within 6 hours**, the system triggers auto-repair.
+When **ANY tool** fails **2+ times within 48 hours**, the system triggers auto-repair.
+
+This works for:
+- **Daily tasks** - 2 failures = caught in 2 days
+- **Weekly tasks** - 2 failures = caught in 2 weeks
+- **Bot tools** - 2 failures = caught immediately
+- **Hourly jobs** - 2 failures = caught in hours
 
 ### 3. Autonomous Repair Process
 
@@ -51,9 +57,14 @@ Edit `args/telegram.yaml`:
 bot:
   auto_fix:
     enabled: true  # Master switch
-    failures_threshold: 3  # How many failures trigger repair
-    time_window_hours: 6  # Within this time window
+    failures_threshold: 2  # How many failures trigger repair
+    time_window_hours: 48  # Within this time window (2 days)
 ```
+
+**Why these defaults?**
+- `2 failures` catches issues fast without false positives
+- `48 hours` wide enough for daily/weekly tasks, tight enough for bot tools
+- Works for ALL tool types: instant, hourly, daily, weekly
 
 **To disable:** Set `enabled: false`
 
@@ -95,16 +106,15 @@ git commit -m "Rollback auto-fix - restore from backup"
 
 **Scenario:** The `rotary_read_agenda` tool has a KeyError bug
 
-1. **10:30 AM** - User sends `/rotary`, bot hits tool loop
+1. **Day 1, 10:30 AM** - User sends `/rotary`, bot hits tool loop
    - Monitor detects failure
    - Records: `rotary_tool` failed at 10:30
+   - **No action yet** (need 2 failures)
 
-2. **10:45 AM** - User tries again, same error
+2. **Day 2, 10:45 AM** - User tries again, same error
    - Monitor records 2nd failure
-
-3. **11:00 AM** - User tries third time
-   - Monitor detects pattern: 3 failures in 30 minutes
-   - **Triggers auto-fixer**
+   - **Pattern detected:** 2 failures in 24 hours
+   - **Triggers auto-fixer immediately**
 
 4. **Auto-fixer process:**
    ```
@@ -227,5 +237,5 @@ This creates a truly autonomous system that gets more reliable over time, not ju
 
 **Built:** 2026-02-16
 **Model:** MiniMax M2.5 (SOTA for coding/agents)
-**Trigger:** 3 failures in 6 hours
+**Trigger:** 2 failures in 48 hours (works for any tool frequency)
 **Safety:** Backups + Git commits + Syntax validation

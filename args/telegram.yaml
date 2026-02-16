@@ -64,11 +64,13 @@ bot:
   # Auto-fix configuration (autonomous code repair via MiniMax)
   auto_fix:
     enabled: true  # Master switch for autonomous code repair
-    failures_threshold: 3  # Trigger after N failures
-    time_window_hours: 6  # Within this time window
-    # When a tool fails 3+ times in 6 hours, MiniMax will:
+    failures_threshold: 2  # Trigger after N failures
+    time_window_hours: 48  # Within this time window (2 days)
+    # When ANY tool fails 2+ times in 48 hours, MiniMax will:
     # 1. Diagnose the root cause
     # 2. Generate a fix
     # 3. Create backup of original code
     # 4. Apply and validate the fix
-    # 5. Send detailed report via Telegram
+    # 5. Commit to git with detailed message
+    # 6. Send detailed report via Telegram
+    # Works for: daily tasks (2 failures = 2 days), weekly tasks (2 weeks), bot tools (immediate)

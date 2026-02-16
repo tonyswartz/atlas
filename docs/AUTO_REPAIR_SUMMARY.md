@@ -2,7 +2,7 @@
 
 ## What It Does
 
-When a Telegram bot tool fails **3+ times in 6 hours**, the system automatically:
+When **ANY tool** fails **2+ times in 48 hours**, the system automatically:
 1. Calls MiniMax to diagnose the bug
 2. Generates a fix
 3. Creates backup of original code
@@ -26,8 +26,8 @@ When a Telegram bot tool fails **3+ times in 6 hours**, the system automatically
 bot:
   auto_fix:
     enabled: true
-    failures_threshold: 3
-    time_window_hours: 6
+    failures_threshold: 2  # Catch issues fast
+    time_window_hours: 48  # Works for daily/weekly tasks
 ```
 
 ## Rollback
@@ -48,7 +48,7 @@ git commit -m "Rollback auto-fix"
 ✅ **Syntax validation** - Rollback if fix has syntax errors
 ✅ **Git commit** - Full history with `git log --grep="Auto-fix:"`
 ✅ **Detailed alerts** - Know exactly what changed and why
-✅ **Conservative trigger** - Only fixes recurring issues (3+ failures)
+✅ **Smart trigger** - Fixes recurring issues (2 failures in 48h works for any tool frequency)
 
 ## Cost
 
@@ -73,4 +73,5 @@ See `docs/AUTO_REPAIR_SYSTEM.md` for complete details.
 
 **Built:** 2026-02-16
 **Model:** MiniMax M2.5
+**Trigger:** 2 failures in 48h (daily, weekly, instant - all work)
 **Philosophy:** Fix symptoms AND root causes autonomously
