@@ -21,10 +21,16 @@ def _url():
 
 def _post(payload: dict) -> dict:
     data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+
+    token = os.environ.get("BROWSER_SERVER_AUTH_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     req = urllib.request.Request(
         _url(),
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
