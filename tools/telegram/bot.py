@@ -110,7 +110,7 @@ async def _handle_podcast_reply(update: Update, reply_to_msg_id: int, text: str)
 
         logger.info(f"Detected reply to podcast prompt - creating episode for {podcast}")
 
-        result_json = execute("podcast_create_episode", {"podcast": podcast, "idea": idea_text if idea_text else text})
+        result_json = await execute("podcast_create_episode", {"podcast": podcast, "idea": idea_text if idea_text else text})
         result = json.loads(result_json)
 
         if result.get("success"):
@@ -173,7 +173,7 @@ async def _handle_podcast_reply(update: Update, reply_to_msg_id: int, text: str)
             if one_off_fixes:
                 tool_input["pronunciation_fixes"] = one_off_fixes
 
-            result_json = execute("podcast_regenerate_paragraph", tool_input)
+            result_json = await execute("podcast_regenerate_paragraph", tool_input)
             result = json.loads(result_json)
 
             if result.get("success"):
@@ -197,7 +197,7 @@ async def _handle_podcast_reply(update: Update, reply_to_msg_id: int, text: str)
             if one_off_fixes:
                 tool_input["pronunciation_fixes"] = one_off_fixes
 
-            result_json = execute("podcast_regenerate_voice", tool_input)
+            result_json = await execute("podcast_regenerate_voice", tool_input)
             result = json.loads(result_json)
 
             if result.get("success"):
@@ -220,7 +220,7 @@ async def _handle_podcast_reply(update: Update, reply_to_msg_id: int, text: str)
             if one_off_fixes:
                 tool_input["pronunciation_fixes"] = one_off_fixes
 
-            result_json = execute("podcast_approve_script", tool_input)
+            result_json = await execute("podcast_approve_script", tool_input)
             result = json.loads(result_json)
 
             if result.get("success"):
@@ -365,7 +365,7 @@ async def on_message(update: Update, context) -> None:
         if idea_text:
             logger.info("Standalone podcast command - creating episode for %s", podcast)
             try:
-                result_json = execute("podcast_create_episode", {"podcast": podcast, "idea": idea_text})
+                result_json = await execute("podcast_create_episode", {"podcast": podcast, "idea": idea_text})
                 result = json.loads(result_json)
                 if result.get("success"):
                     await update.message.reply_text(
