@@ -28,6 +28,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import memory.memory_read
 import memory.memory_write
+import tools.memory.conversation_tracker
 
 
 def _resolve_path(key: str, default: Path) -> Path:
@@ -1131,26 +1132,29 @@ def _script_writer(inp: dict) -> str:
 
 def _conversation_context(inp: dict) -> str:
     """Get conversation history and patterns."""
-    tracker_path = REPO_ROOT / "tools" / "memory" / "conversation_tracker.py"
-    if not tracker_path.exists():
-        logger.warning("conversation_tracker.py not found")
+    try:
+        action = inp.get("action", "recent")
+
+        if action == "recent":
+            hours = int(inp.get("hours", 24))
+            limit = int(inp.get("limit", 20))
+            turns = tools.memory.conversation_tracker.get_recent_conversation(hours=hours, limit=limit)
+            return json.dumps({"success": True, "turns": turns}, indent=2, default=str)
+
+        elif action == "patterns":
+            patterns = tools.memory.conversation_tracker.detect_patterns()
+            return json.dumps({"success": True, "patterns": patterns}, indent=2, default=str)
+
+        elif action == "corrections":
+            summary = tools.memory.conversation_tracker.get_corrections_summary()
+            return json.dumps({"success": True, "corrections": summary}, indent=2, default=str)
+
+        else:
+            return json.dumps({"success": False, "error": f"Unknown action: {action}"})
+
+    except Exception as e:
+        logger.exception("conversation_tracker failed")
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
-
-    action = inp.get("action", "recent")
-    args = [sys.executable, str(tracker_path), "--action", action]
-
-    if action == "recent":
-        if "hours" in inp:
-            args.extend(["--hours", str(inp["hours"])])
-        if "limit" in inp:
-            args.extend(["--limit", str(inp["limit"])])
-
-    result = _run(args)
-    if result.returncode != 0:
-        logger.warning("conversation_tracker failed: %s", result.stderr.strip())
-        return json.dumps({"success": False, "error": USER_FACING_ERROR})
-
-    return result.stdout.strip() or json.dumps({"success": True})
 
 
 def _proactive_intelligence(inp: dict) -> str:
@@ -1177,9 +1181,6 @@ def _proactive_intelligence(inp: dict) -> str:
 def _log_correction(inp: dict) -> str:
     """Log a user correction for learning."""
     try:
-        sys.path.insert(0, str(REPO_ROOT / "tools" / "memory"))
-        from conversation_tracker import log_correction
-
         original = inp.get("original_response", "")
         correction = inp.get("correction", "")
         pattern = inp.get("learned_pattern", "")
@@ -1187,7 +1188,7 @@ def _log_correction(inp: dict) -> str:
         if not original or not correction:
             return json.dumps({"success": False, "error": "original_response and correction required"})
 
-        log_correction(original, correction, learned_pattern=pattern)
+        tools.memory.conversation_tracker.log_correction(original, correction, learned_pattern=pattern)
 
         # Also save to memory for long-term retention
         memory_write_path = REPO_ROOT / "memory" / "memory_write.py"
