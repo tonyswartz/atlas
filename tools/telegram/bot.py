@@ -29,6 +29,13 @@ from commands import route as route_command, get_trial_prep_message, get_code_di
 from group_manager import register_chat
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# Short-term error log: always write to file so failures are visible even if stderr isn't captured
+_log_dir = get_repo_root() / "logs"
+_log_dir.mkdir(parents=True, exist_ok=True)
+_fh = logging.FileHandler(_log_dir / "telegram_bot.log", encoding="utf-8")
+_fh.setLevel(logging.DEBUG)
+_fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s %(message)s"))
+logging.getLogger().addHandler(_fh)
 logger = logging.getLogger(__name__)
 
 # Used by git_sync_and_restart to avoid restarting while the bot is handling a message
@@ -357,16 +364,23 @@ async def on_message(update: Update, context) -> None:
             idea_text = re.sub(r'^\s*/832\s*', '', msg_stripped, flags=re.IGNORECASE).strip()
         if idea_text:
             logger.info("Standalone podcast command - creating episode for %s", podcast)
-            result_json = execute("podcast_create_episode", {"podcast": podcast, "idea": idea_text})
-            result = json.loads(result_json)
-            if result.get("success"):
+            try:
+                result_json = execute("podcast_create_episode", {"podcast": podcast, "idea": idea_text})
+                result = json.loads(result_json)
+                if result.get("success"):
+                    await update.message.reply_text(
+                        f"✅ Creating {podcast} episode...\n\nScript generation in progress. You'll get a preview shortly.",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"❌ Failed to create episode: {result.get('error', 'Unknown error')}",
+                        parse_mode="Markdown"
+                    )
+            except Exception as e:
+                logger.exception("Standalone podcast create failed")
                 await update.message.reply_text(
-                    f"✅ Creating {podcast} episode...\n\nScript generation in progress. You'll get a preview shortly.",
-                    parse_mode="Markdown"
-                )
-            else:
-                await update.message.reply_text(
-                    f"❌ Failed to create episode: {result.get('error', 'Unknown error')}",
+                    _escape_markdown(f"❌ Couldn't create episode: {e}. Try again or check logs."),
                     parse_mode="Markdown"
                 )
             return

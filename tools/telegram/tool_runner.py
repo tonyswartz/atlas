@@ -1378,8 +1378,9 @@ _ZAPIER_TOOLS = {
 
 def _podcast_create_episode(inp: dict) -> str:
     """Create a new podcast episode from an idea."""
+    import tempfile
     podcast = inp.get("podcast")
-    idea = inp.get("idea")
+    idea = (inp.get("idea") or "").strip()
 
     if not podcast or not idea:
         return json.dumps({"success": False, "error": "podcast and idea are required"})
@@ -1389,14 +1390,37 @@ def _podcast_create_episode(inp: dict) -> str:
         logger.warning("idea_processor.py not found at %s", script)
         return json.dumps({"success": False, "error": USER_FACING_ERROR})
 
-    args = [
-        sys.executable,
-        str(script),
-        "--podcast", podcast,
-        "--idea", idea
-    ]
+    # Long ideas: pass via temp file to avoid argv length limits and escaping issues
+    idea_file_path = None
+    if len(idea) > 2000:
+        fd, idea_file_path = tempfile.mkstemp(suffix=".txt", prefix="podcast_idea_")
+        try:
+            os.write(fd, idea.encode("utf-8"))
+            os.close(fd)
+            args = [sys.executable, str(script), "--podcast", podcast, "--idea-file", idea_file_path]
+        except Exception as e:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if idea_file_path:
+                try:
+                    os.unlink(idea_file_path)
+                except OSError:
+                    pass
+            logger.warning("podcast_create_episode idea file failed: %s", e)
+            return json.dumps({"success": False, "error": USER_FACING_ERROR})
+    else:
+        args = [sys.executable, str(script), "--podcast", podcast, "--idea", idea]
 
-    result = _run(args, cwd=REPO_ROOT)
+    result = _run(args, cwd=REPO_ROOT, timeout=120)
+
+    if idea_file_path:
+        try:
+            os.unlink(idea_file_path)
+        except OSError:
+            pass
 
     if result.returncode != 0:
         logger.warning("podcast_create_episode failed: %s", result.stderr.strip())
