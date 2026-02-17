@@ -311,17 +311,15 @@ async def on_message(update: Update, context) -> None:
         if podcast_handled:
             return
 
-    # --- Check if /build or /code used outside coding group ---
+    # --- /build and /code: accept in any chat; reply goes to Coding group if not there ---
     text = update.message.text
+    text_lower = text.strip().lower()
     coding_group_id = config.get("bot", {}).get("groups", {}).get("code")
-    if coding_group_id:
-        text_lower = text.strip().lower()
-        if (text_lower.startswith("/build") or text_lower.startswith("/code")) and chat.id != coding_group_id:
-            await update.message.reply_text(
-                "Please use /build and /code commands in the Coding group for better organization.",
-                parse_mode="Markdown"
-            )
-            return
+    redirect_build_to_coding = (
+        coding_group_id
+        and chat.id != coding_group_id
+        and (text_lower.startswith("/build") or text_lower.startswith("/code"))
+    )
 
     # --- Substitute special commands with directives for the LLM ---
     trial_directive = get_trial_prep_message(text)
@@ -393,13 +391,26 @@ async def on_message(update: Update, context) -> None:
             return
 
         # --- Quick signal for known-slow operations (bambu fetches via FTPS) ---
+        # Skip for /build and /code so we don't say "checking the printer" when building a script that mentions printer
         _lower = text.strip().lower()
-        if any(w in _lower for w in ("bambu", "printer", "printing", "ams", "filament", "tray")):
-            await update.message.reply_text("checking the printer…", parse_mode="Markdown")
+        if not (_lower.startswith("/build") or _lower.startswith("/code")):
+            if any(w in _lower for w in ("bambu", "printer", "printing", "ams", "filament", "tray")):
+                await update.message.reply_text("checking the printer…", parse_mode="Markdown")
 
         # --- Process message via LLM ---
         reply = await handle_message(text, user_id)
-        await update.message.reply_text(_escape_markdown(reply), parse_mode="Markdown")
+        if redirect_build_to_coding:
+            await context.bot.send_message(
+                chat_id=coding_group_id,
+                text="From main chat:\n\n" + _escape_markdown(reply),
+                parse_mode="Markdown",
+            )
+            await update.message.reply_text(
+                "I'm handling your request in the Coding group — check there for my response and any follow-up questions.",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(_escape_markdown(reply), parse_mode="Markdown")
     except Exception as e:
         logger.exception("Error handling message")
         await update.message.reply_text(_escape_markdown(f"Couldn't do that: {e}"), parse_mode="Markdown")

@@ -787,6 +787,10 @@ BUILD_DIRECTIVE = """You are helping the user build or modify a Python script an
 - list_files: Browse tools/scripts/ or tools/briefings/ directories
 - script_writer: Generate/save Python scripts based on natural language descriptions
 - launchd_manager: Create launchd jobs to schedule scripts automatically
+- browser: Safari via Selenium — navigate to a URL, snapshot page content. Use when the user wants live data from the web.
+- browser_search: Search the web (e.g. to find the right URL); then use browser with that URL for the actual content.
+
+**"Use Safari" / "browse for information":** When the user says to use Safari or browse, they mean: use the **browser** tool (Safari/Selenium) to fetch real, current information from the web — not guessing or non-web sources. For one-off or interactive builds, use the browser tool yourself. For scheduled scripts that need daily web data, the script should call the browser server (tools/browser/browser_server.py) or tools/browser/browser.py, or use requests against a known URL; do not invent or assume data.
 
 **IMPORTANT: Detect modification vs creation**
 
@@ -912,6 +916,7 @@ You (internally): This mentions "research brief script" → modification workflo
 - **API polling**: Use state file pattern (see script_writer.py templates)
 - **Credentials**: Always use envchain for sensitive data, never hardcode
 - **Logging**: Print to stdout/stderr - launchd captures to log files automatically
+- **Live web data / "use Safari"**: Use the browser tool (navigate + snapshot) to get real page content; for scheduled scripts, use the browser server or browser.py CLI so the job fetches from the web, not guessed or non-web sources
 
 **Safety:**
 - Always show code before saving
