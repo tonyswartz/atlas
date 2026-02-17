@@ -96,16 +96,16 @@
 ## Next Steps to Fix Confirmations
 
 ### Option A: Use Different Auth Method
-Instead of envchain, store token in launchd plist EnvironmentVariables:
+Instead of envchain, store token in launchd plist EnvironmentVariables (use value from envchain/Keychain; never commit the token):
 ```xml
 <key>EnvironmentVariables</key>
 <dict>
     <key>TELEGRAM_BOT_TOKEN</key>
-    <string>8339414604:AAHH7VUG0BkjnQsR84wmAtJ6LV6VAEvGTZ0</string>
+    <string>REDACTED_USE_ENV_OR_ENVCHAIN</string>
 </dict>
 ```
 **Pros**: Guaranteed to work
-**Cons**: Token in plain text in plist file
+**Cons**: Token in plain text in plist file (plist is local only, not in repo)
 
 ### Option B: Debug Envchain Launchd Issue
 Compare daily-brief (working) vs reply-handler (not working):
@@ -131,7 +131,7 @@ Update `com.atlas.bambu-reply-handler.plist`:
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>TELEGRAM_BOT_TOKEN</key>
-    <string>8339414604:AAHH7VUG0BkjnQsR84wmAtJ6LV6VAEvGTZ0</string>
+    <string>REDACTED_USE_ENV_OR_ENVCHAIN</string>
 </dict>
 ```
 
