@@ -2,6 +2,12 @@
 
 Master list of tools and their functions. Before writing new code, check this list. If you create a new tool, add it here with a one-sentence description.
 
+## Security (run from repo root)
+
+| Tool | Description |
+|------|-------------|
+| `tools/security/secret_scan.py` | Scans git-tracked files for accidental secrets (Telegram token, API keys, tokens in docs/plists). Run before commit; used by pre-commit. See `context/NO_SECRETS_IN_REPO.md`. |
+
 ## Memory (run from repo root: `python memory/<script>.py`)
 
 | Tool | Description |

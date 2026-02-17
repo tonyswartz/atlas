@@ -307,6 +307,7 @@ Document Claude-specific mistakes here (not script bugs—those go in goals):
 * Read the full goal before starting a task—don't skim
 * **NEVER DELETE YOUTUBE VIDEOS** — Video deletion is irreversible. The MCP server blocks this intentionally. If deletion is ever truly needed, ask the user 3 times and get 3 confirmations before proceeding. Direct user to YouTube Studio instead.
 * **macOS Keychain + cron = broken** — cron can't access Keychain. For scheduled tasks needing OAuth/Keychain (gog, etc.), use launchd (runs in user session) not cron.
+* **Never write secrets into tracked files** — No API keys, tokens, or passwords in docs, summaries, args, or plist examples. Use placeholders (REDACTED, use .env, envchain). See `context/NO_SECRETS_IN_REPO.md`. Run `python3 tools/security/secret_scan.py` before committing.
 
 *(Add new guardrails as mistakes happen. Keep this under 15 items.)*
 
