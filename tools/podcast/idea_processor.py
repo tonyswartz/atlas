@@ -149,42 +149,51 @@ def create_episode(podcast_name: str, idea: str, title: str = None):
     return episode_id
 
 
-def trigger_script_generation(episode_id: str):
-    """Trigger script generation for an episode."""
-    print(f"\n🔄 Triggering script generation...")
+def trigger_script_generation(episode_id: str, wait: bool = False):
+    """
+    Trigger script generation for an episode.
+    By default runs in background so the caller (e.g. Telegram bot) can reply immediately.
+    Script generator will update DB and send Telegram preview when done.
+    """
+    import subprocess
 
     script_generator = REPO_ROOT / "tools" / "podcast" / "script_generator.py"
+    print(f"\n🔄 Triggering script generation for {episode_id}...")
 
-    import subprocess
-    result = subprocess.run(
+    if wait:
+        result = subprocess.run(
+            [sys.executable, str(script_generator), "--episode-id", episode_id],
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+        )
+        if result.returncode == 0:
+            print("✅ Script generation complete")
+            print(result.stdout)
+            config = load_config()
+            db_path = REPO_ROOT / config["paths"]["catalog_db"]
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE episodes SET status = 'script_draft', script_draft_at = ? WHERE episode_id = ?",
+                (datetime.now().isoformat(), episode_id),
+            )
+            conn.commit()
+            conn.close()
+        else:
+            print("❌ Script generation failed")
+            print(result.stderr)
+            sys.exit(1)
+        return
+
+    # Background: don't block so bot can reply "Creating..." right away
+    subprocess.Popen(
         [sys.executable, str(script_generator), "--episode-id", episode_id],
-        capture_output=True,
-        text=True,
+        cwd=str(REPO_ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
     )
-
-    if result.returncode == 0:
-        print("✅ Script generation complete")
-        print(result.stdout)
-
-        # Update database status to script_draft
-        config = load_config()
-        db_path = REPO_ROOT / config["paths"]["catalog_db"]
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            UPDATE episodes
-            SET status = 'script_draft',
-                script_draft_at = ?
-            WHERE episode_id = ?
-        """, (datetime.now().isoformat(), episode_id))
-
-        conn.commit()
-        conn.close()
-    else:
-        print("❌ Script generation failed")
-        print(result.stderr)
-        sys.exit(1)
+    print("   Script generation started in background. Preview will be sent to Telegram when ready.")
 
 
 def main():
@@ -213,6 +222,11 @@ def main():
         action="store_true",
         help="Don't trigger script generation (just create episode)"
     )
+    parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait for script generation to finish (default: run in background so caller can reply immediately)"
+    )
 
     args = parser.parse_args()
 
@@ -232,7 +246,7 @@ def main():
 
     # Trigger script generation unless --no-generate
     if not args.no_generate:
-        trigger_script_generation(episode_id)
+        trigger_script_generation(episode_id, wait=args.wait)
     else:
         print(f"\nℹ️  Skipping script generation (use --episode-id {episode_id} to generate later)")
 

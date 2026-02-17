@@ -370,6 +370,16 @@ async def on_message(update: Update, context) -> None:
                     parse_mode="Markdown"
                 )
             return
+        # No idea provided: reply so the user gets feedback instead of silence
+        name = {"explore": "Explore with Tony", "sololaw": "Solo Law Club", "832weekends": "832 Weekends"}.get(podcast, podcast)
+        await update.message.reply_text(
+            f"🎙️ **{name}** — what’s your episode idea?\n\n"
+            "Send the command with your idea, e.g.:\n"
+            "• `/explore Trip to Portugal and using ChatGPT for planning`\n"
+            "• `/solo Setting up WIP limits with a Kanban board`",
+            parse_mode="Markdown"
+        )
+        return
 
     # --- /build and /code: accept in any chat; reply goes to Coding group if not there ---
     text_lower = text.strip().lower()
