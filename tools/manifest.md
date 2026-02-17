@@ -143,6 +143,7 @@ Master list of tools and their functions. Before writing new code, check this li
 | `tools/system/cron_manager.py` | Cron job management utilities (list, add, remove, update schedules). Used by system_config.py. CLI: list/add/remove/update. |
 | `tools/system/script_writer.py` | Generate Python scripts from natural language descriptions. Creates working scripts with error handling, logging, and atlas integration. CLI: --task "description" --output "path" --schedule "cron". Exposed as `script_writer` tool to Telegram bot LLM. |
 | `tools/system/launchd_manager.py` | Create, load, unload, and list launchd jobs for scheduled automation. Parses human-readable schedules (e.g., "daily at 9am", "every 5 minutes"). CLI: create/load/unload/list. Exposed as `launchd_manager` tool to Telegram bot LLM. |
+| `tools/system/launchd_config_checker.py` | **Automated launchd health checker** - runs daily at 3am via launchd; verifies all Atlas services have PYTHONDONTWRITEBYTECODE=1; auto-fixes missing config, reloads services, sends alerts. Prevents bytecode cache issues. |
 | `tools/system/git_sync_and_restart.py` | Daily midnight: git fetch/pull/push to sync with GitHub; restarts Telegram bot if idle so it uses updated code. If bot is busy, sets pending flag; deferred job (every 10 min) restarts when idle. Run via launchd (com.atlas.git-sync, com.atlas.git-sync-deferred-restart). |
 
 ## Podcast Production (`tools/podcast/`)
