@@ -80,9 +80,9 @@ def create_episode(podcast_name: str, idea: str, title: str = None):
     timestamp = datetime.now()
     episode_id = f"{podcast_name}-{episode_number:03d}"
 
-    # Create nested episode directory: data/podcast_episodes/{podcast_name}/{number}/
-    episodes_dir = REPO_ROOT / config["paths"]["episodes_dir"]
-    podcast_dir = episodes_dir / podcast_name
+    # Create nested episode directory in Obsidian: Podcasts/{display_name}/{number}/
+    episodes_dir = Path(config["paths"]["episodes_dir"])
+    podcast_dir = episodes_dir / podcast_config["name"]
     episode_dir = podcast_dir / f"{episode_number:03d}"
     episode_dir.mkdir(parents=True, exist_ok=True)
 

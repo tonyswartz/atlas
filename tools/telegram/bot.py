@@ -229,6 +229,22 @@ async def _keep_typing(chat, stop_event):
         pass  # Ignore errors (e.g., if chat closes)
 
 
+# Shown when the bot is still processing after this many seconds (so user knows it's not stuck)
+DELAYED_STATUS_SEC = 5
+DELAYED_STATUS_MESSAGE = "Thinking… (may take a minute)"
+
+
+async def _delayed_status_task(chat, delay_sec: int, message: str):
+    """After delay_sec, send one status message to the chat. Cancelled if reply is sent first."""
+    try:
+        await asyncio.sleep(delay_sec)
+        await chat.send_message(message)
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning("Delayed status message failed: %s", e)
+
+
 def _escape_markdown(text: str) -> str:
     """Prepare reply for Telegram parse_mode=Markdown: allow bold/italic/links, but prevent '[date]' or '[LK-511]'
     from being parsed as links (which causes 'Can't parse entities'). Escapes \\ and [ unless part of a link; normalizes ** to *."""
@@ -350,6 +366,7 @@ async def on_message(update: Update, context) -> None:
     typing_enabled = config.get("bot", {}).get("typing_indicator", True)
     stop_typing = asyncio.Event()
     typing_task = None
+    delayed_status_task = None
 
     if typing_enabled:
         typing_task = asyncio.create_task(_keep_typing(update.message.chat, stop_typing))
@@ -397,6 +414,11 @@ async def on_message(update: Update, context) -> None:
             if any(w in _lower for w in ("bambu", "printer", "printing", "ams", "filament", "tray")):
                 await update.message.reply_text("checking the printer…", parse_mode="Markdown")
 
+        # --- If still processing after a few seconds, send a "taking longer" indicator ---
+        delayed_status_task = asyncio.create_task(
+            _delayed_status_task(update.message.chat, DELAYED_STATUS_SEC, DELAYED_STATUS_MESSAGE)
+        )
+
         # --- Process message via LLM ---
         reply = await handle_message(text, user_id)
         if redirect_build_to_coding:
@@ -421,6 +443,13 @@ async def on_message(update: Update, context) -> None:
                 BOT_BUSY_FILE.unlink()
         except OSError:
             pass
+        # Cancel delayed "taking longer" message if we already replied
+        if delayed_status_task and not delayed_status_task.done():
+            delayed_status_task.cancel()
+            try:
+                await delayed_status_task
+            except asyncio.CancelledError:
+                pass
         # Stop typing indicator
         if typing_task:
             stop_typing.set()

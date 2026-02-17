@@ -65,9 +65,10 @@ def send_telegram(message: str, chat_id: str) -> dict:
 
 
 def load_ideas_suggestions(podcast_name: str, config: dict, max_suggestions: int = 3) -> list[str]:
-    """Load a few idea suggestions from Obsidian Podcasts/{podcast_name}/Ideas.md."""
+    """Load a few idea suggestions from Obsidian Podcasts/{display_name}/Ideas.md."""
     obsidian_base = Path(config["paths"]["obsidian_podcasts"])
-    ideas_path = obsidian_base / podcast_name / "Ideas.md"
+    display_name = config["podcasts"][podcast_name]["name"]
+    ideas_path = obsidian_base / display_name / "Ideas.md"
     if not ideas_path.exists():
         return []
     try:

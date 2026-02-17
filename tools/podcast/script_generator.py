@@ -217,11 +217,14 @@ def generate_script(episode_id: str):
     # Support both formats: "sololaw-030" and "20260210-170000-explore"
     if episode_id.count("-") >= 2 and episode_id.split("-")[0].isdigit():
         # Old format: "20260210-170000-explore"
-        episode_dir = REPO_ROOT / config["paths"]["episodes_dir"] / episode_id
+        episode_dir = Path(config["paths"]["episodes_dir"]) / episode_id
     else:
-        # New format: "sololaw-030" -> "sololaw/030"
+        # New format: "explore-020" -> "Explore with Tony/020" (use display name for Obsidian folder)
         parts = episode_id.split("-", 1)
-        episode_dir = REPO_ROOT / config["paths"]["episodes_dir"] / parts[0] / parts[1]
+        if parts[0] not in config["podcasts"]:
+            raise ValueError(f"Unknown podcast: {parts[0]}")
+        podcast_display_name = config["podcasts"][parts[0]]["name"]
+        episode_dir = Path(config["paths"]["episodes_dir"]) / podcast_display_name / parts[1]
 
     state_path = episode_dir / "state.json"
 

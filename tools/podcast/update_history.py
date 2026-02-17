@@ -49,9 +49,9 @@ def update_history(episode_id: str):
 
     podcast_config = config["podcasts"][podcast_name]
 
-    # Load episode state
-    episodes_dir = REPO_ROOT / config["paths"]["episodes_dir"]
-    episode_dir = episodes_dir / podcast_name / episode_number
+    # Load episode state (Obsidian path uses display name, e.g. "Explore with Tony")
+    episodes_dir = Path(config["paths"]["episodes_dir"])
+    episode_dir = episodes_dir / podcast_config["name"] / episode_number
     state_path = episode_dir / "state.json"
 
     if not state_path.exists():

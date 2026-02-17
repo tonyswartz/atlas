@@ -927,17 +927,26 @@ async def handle_message(text: str, user_id: int) -> str:
 
         # Safeguard: Check for tool loops before executing
         loop_detected = False
+        looping_tools: list[str] = []
         for tc in tool_calls:
             tool_call_counts[tc.function.name] = tool_call_counts.get(tc.function.name, 0) + 1
 
             if tool_call_counts[tc.function.name] > MAX_CALLS_PER_TOOL:
                 logger.warning(f"Loop detected: {tc.function.name} called {tool_call_counts[tc.function.name]} times (max {MAX_CALLS_PER_TOOL})")
                 loop_detected = True
-                break
+                if tc.function.name not in looping_tools:
+                    looping_tools.append(tc.function.name)
 
         if loop_detected:
             _save_sessions()
-            return f"I seem to be stuck in a loop calling the same tools repeatedly. Let me try a different approach: could you rephrase your request or break it into smaller steps?"
+            tools_str = ", ".join(looping_tools) if looping_tools else "the same tool"
+            return (
+                f"I hit a safety limit: {tools_str} was called too many times in a row, so I stopped to avoid an infinite loop.\n\n"
+                "**What you can do:**\n"
+                "• Ask me to do the same thing in smaller steps (e.g. \"create the script only\" then \"schedule it at 8pm\").\n"
+                "• Run the steps yourself from the repo (see `tools/system/launchd_manager.py` and the script we were building).\n"
+                "• Try again in a new message — sometimes a fresh turn helps."
+            )
 
         # Execute each tool call and feed results back individually
         # (OpenAI requires one tool_result message per tool_call_id)
@@ -967,7 +976,13 @@ async def handle_message(text: str, user_id: int) -> str:
     # Exhausted max tool rounds without a text reply
     logger.warning("Tool-use loop hit %d rounds without text reply — returning last content", MAX_TOOL_ROUNDS)
     _save_session(user_id)
-    return message.content or "(tool loop limit reached — no text response)"
+    if message.content and message.content.strip():
+        return message.content
+    return (
+        "I used the maximum number of tool steps without finishing a reply, so I’m stopping here.\n\n"
+        "**What you can do:** Try again with a shorter or more specific request, or ask me to do one step at a time "
+        "(e.g. first create the script, then in a follow-up ask to schedule it)."
+    )
 
 
 def reset_session(user_id: int) -> None:

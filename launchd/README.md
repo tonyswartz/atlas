@@ -21,6 +21,7 @@ This copies plists to `~/Library/LaunchAgents/` and loads them. Logs go to `atla
 | com.atlas.daily-brief | 6:00 | Daily briefing |
 | com.atlas.wa-dui-bill-tracker | 9:00 | WA DUI bill tracker |
 | com.atlas.local-news | 12:00 | Local news brief |
+| com.atlas.olympics-medal-brief | 20:00 | 2026 Winter Olympics top 5 medal table to Telegram (stops after 2026-02-22) |
 | com.atlas.research-brief | 15:00 | Research brief |
 | com.atlas.rotary-print-agenda | Tue 16:00 | Print Rotary agenda (if completed) to Brother MFC-L3780CDW; Telegram when done |
 | com.atlas.watchdog | 6:05 | Scans logs for errors, Telegram alert |

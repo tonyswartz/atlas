@@ -67,6 +67,7 @@ Master list of tools and their functions. Before writing new code, check this li
 | `tools/briefings/news_briefing.py` | Thin wrapper around local_news.py. |
 | `tools/briefings/garbage_reminder.py` | Weekly: sets next Thursday garbage/recycling line in Tony Reminders.md (1st/3rd Thu = both, 2nd/4th = garbage only). |
 | `tools/briefings/reminder_add.py` | Add a reminder to Tony Reminders.md; parses due/recurrence (e.g. weekly thu, tomorrow). --mark-done <item> ... marks matching reminder lines as done. Used by Telegram reminder_add and reminder_mark_done. |
+| `tools/briefings/olympics_medal_brief.py` | Daily 8pm: fetches 2026 Winter Olympics (Milan–Cortina) medal table from Wikipedia, sends top 5 countries to Telegram main chat. Auto-skips after end date (default 2026-02-22). Run via launchd. |
 | `tools/briefings/wa_prosecutors_weekly.py` | Weekly case law summary from WA Prosecutors website; scrapes most recent week's roundup, formats with smart splits by jurisdiction, sends to Telegram. Runs Monday 8am via launchd. |
 
 ## Rotary (`tools/rotary/`)

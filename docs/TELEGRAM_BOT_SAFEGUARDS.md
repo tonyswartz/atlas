@@ -26,7 +26,7 @@ tool_call_counts = {}
 for tc in tool_calls:
     tool_call_counts[tc.function.name] = tool_call_counts.get(tc.function.name, 0) + 1
     if tool_call_counts[tc.function.name] > MAX_CALLS_PER_TOOL:
-        return "I seem to be stuck in a loop calling the same tools repeatedly..."
+        return "I hit a safety limit: <tool> was called too many times... (with concrete next steps)"
 ```
 
 ✅ **Active Safeguards:**
@@ -53,7 +53,7 @@ for tool_call in tool_calls:
     # Detect if same tool called 3+ times in this conversation
     if tool_call_history.count(tool_call.function.name) >= 2:
         logger.warning(f"Loop detected: {tool_call.function.name} called 3+ times")
-        return "I seem to be stuck in a loop. Could you rephrase your request?"
+        return "I hit a safety limit... (see conversation.py for message with tool name and next steps)"
 ```
 
 **Option B: Require Text Response Every N Rounds**
