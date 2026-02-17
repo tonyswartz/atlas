@@ -10,6 +10,7 @@ Usage:
     python tools/podcast/episode_manager.py --episode-id 20260210-170000-explore --retry script
     python tools/podcast/episode_manager.py --episode-id 20260210-170000-explore --mark-published
     python tools/podcast/episode_manager.py --action archive --before 2025-01-01
+    python tools/podcast/episode_manager.py --action delete --episode-id sololaw-031,sololaw-032
 """
 
 import sys
@@ -228,10 +229,67 @@ def archive_episodes(before_date: str):
     print(f"\n✅ Archive complete")
 
 
+def delete_episodes(episode_ids: list[str]):
+    """
+    Remove draft/wrong episodes: delete DB row, Obsidian episode dir, and repo mirror.
+    Use to free episode numbers (e.g. delete sololaw-031 and sololaw-032 so next is 031).
+    """
+    config = load_config()
+    db_path = REPO_ROOT / config["paths"]["catalog_db"]
+    episodes_dir = Path(config["paths"]["episodes_dir"])
+
+    for episode_id in episode_ids:
+        episode_id = episode_id.strip()
+        if not episode_id:
+            continue
+
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT episode_dir FROM episodes WHERE episode_id = ?", (episode_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            print(f"⚠️  Episode not in catalog: {episode_id} (skipping)")
+            continue
+
+        episode_dir = Path(row[0])
+
+        # Remove Obsidian episode directory
+        if episode_dir.exists():
+            shutil.rmtree(episode_dir)
+            print(f"   Deleted dir: {episode_dir}")
+        else:
+            print(f"   Dir not found (already gone): {episode_dir}")
+
+        # Remove repo mirror (data/podcast_episodes/<episode_id>/)
+        mirror_dir = REPO_ROOT / "data" / "podcast_episodes" / episode_id
+        if mirror_dir.exists():
+            shutil.rmtree(mirror_dir)
+            print(f"   Deleted mirror: {mirror_dir}")
+        else:
+            print(f"   Mirror not found: {mirror_dir}")
+
+        # Remove from database
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM episodes WHERE episode_id = ?", (episode_id,))
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        if deleted:
+            print(f"✅ Removed {episode_id} from catalog and disk")
+        else:
+            print(f"⚠️  No DB row deleted for {episode_id}")
+
+    print(f"\n✅ Delete complete. Next Solo Law Club episode will be 031 if 030 was the last kept.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Manage podcast episodes")
-    parser.add_argument("--action", choices=["list", "archive"], help="Action to perform")
-    parser.add_argument("--episode-id", help="Specific episode to show/modify")
+    parser.add_argument("--action", choices=["list", "archive", "delete"], help="Action to perform")
+    parser.add_argument("--episode-id", help="Specific episode to show/modify (for delete: comma-separated list, e.g. sololaw-031,sololaw-032)")
     parser.add_argument("--podcast", choices=["explore", "sololaw", "832weekends"], help="Filter by podcast")
     parser.add_argument("--status", help="Filter by status")
     parser.add_argument("--retry", choices=["script", "tts", "mix"], help="Retry a specific stage")
@@ -247,6 +305,12 @@ def main():
         if not args.before:
             parser.error("--action archive requires --before DATE")
         archive_episodes(args.before)
+
+    elif args.action == "delete":
+        if not args.episode_id:
+            parser.error("--action delete requires --episode-id (e.g. sololaw-031,sololaw-032)")
+        ids = [eid.strip() for eid in args.episode_id.split(",") if eid.strip()]
+        delete_episodes(ids)
 
     elif args.episode_id:
         if args.retry:

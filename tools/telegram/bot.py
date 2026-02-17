@@ -90,15 +90,16 @@ async def _handle_podcast_reply(update: Update, reply_to_msg_id: int, text: str)
         idea_text = text.strip()
 
         # If user explicitly says /explore, /solo, or /832, use that podcast (override reply context)
-        if re.match(r'/explore\s', idea_text, re.IGNORECASE):
+        # Match command at start with optional space after (so "/explore" or "/explore idea" both work)
+        if re.match(r'^\s*/explore\b', idea_text, re.IGNORECASE):
             podcast = "explore"
-            idea_text = re.sub(r'^/explore\s+', '', idea_text, flags=re.IGNORECASE).strip()
-        elif re.match(r'/solo\s', idea_text, re.IGNORECASE):
+            idea_text = re.sub(r'^\s*/explore\s*', '', idea_text, flags=re.IGNORECASE).strip()
+        elif re.match(r'^\s*/solo\b', idea_text, re.IGNORECASE):
             podcast = "sololaw"
-            idea_text = re.sub(r'^/solo\s+', '', idea_text, flags=re.IGNORECASE).strip()
-        elif re.match(r'/832\s', idea_text, re.IGNORECASE):
+            idea_text = re.sub(r'^\s*/solo\s*', '', idea_text, flags=re.IGNORECASE).strip()
+        elif re.match(r'^\s*/832\b', idea_text, re.IGNORECASE):
             podcast = "832weekends"
-            idea_text = re.sub(r'^/832\s+', '', idea_text, flags=re.IGNORECASE).strip()
+            idea_text = re.sub(r'^\s*/832\s*', '', idea_text, flags=re.IGNORECASE).strip()
 
         logger.info(f"Detected reply to podcast prompt - creating episode for {podcast}")
 
@@ -339,8 +340,38 @@ async def on_message(update: Update, context) -> None:
         if podcast_handled:
             return
 
-    # --- /build and /code: accept in any chat; reply goes to Coding group if not there ---
+    # --- Standalone /explore, /solo, /832 (create episode without replying to a prompt) ---
     text = update.message.text
+    msg_stripped = (text or "").strip()
+    if not update.message.reply_to_message and re.match(r'^\s*/(?:explore|solo|832)\b', msg_stripped, re.IGNORECASE):
+        from tools.telegram.tool_runner import execute
+        import json
+        if re.match(r'^\s*/explore\b', msg_stripped, re.IGNORECASE):
+            podcast = "explore"
+            idea_text = re.sub(r'^\s*/explore\s*', '', msg_stripped, flags=re.IGNORECASE).strip()
+        elif re.match(r'^\s*/solo\b', msg_stripped, re.IGNORECASE):
+            podcast = "sololaw"
+            idea_text = re.sub(r'^\s*/solo\s*', '', msg_stripped, flags=re.IGNORECASE).strip()
+        else:
+            podcast = "832weekends"
+            idea_text = re.sub(r'^\s*/832\s*', '', msg_stripped, flags=re.IGNORECASE).strip()
+        if idea_text:
+            logger.info("Standalone podcast command - creating episode for %s", podcast)
+            result_json = execute("podcast_create_episode", {"podcast": podcast, "idea": idea_text})
+            result = json.loads(result_json)
+            if result.get("success"):
+                await update.message.reply_text(
+                    f"✅ Creating {podcast} episode...\n\nScript generation in progress. You'll get a preview shortly.",
+                    parse_mode="Markdown"
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ Failed to create episode: {result.get('error', 'Unknown error')}",
+                    parse_mode="Markdown"
+                )
+            return
+
+    # --- /build and /code: accept in any chat; reply goes to Coding group if not there ---
     text_lower = text.strip().lower()
     coding_group_id = config.get("bot", {}).get("groups", {}).get("code")
     redirect_build_to_coding = (

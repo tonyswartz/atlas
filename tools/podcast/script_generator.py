@@ -127,7 +127,7 @@ def call_minimax(hardprompt: str, user_idea: str, examples: str = "", prior_epis
     # Add the actual generation request
     messages.append({
         "role": "user",
-        "content": f"Now generate a podcast script based on this idea:\n\n{user_idea}"
+        "content": f"Now generate a podcast script based on this idea. Remember: output only the spoken words. No section headers, no labels like [INTRO] or \"ACTION STEP\", no markdown — the script will be read aloud from top to bottom.\n\n{user_idea}"
     })
 
     # Call MiniMax API (OpenAI-compatible)
