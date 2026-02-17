@@ -99,6 +99,14 @@ def approve_episode(episode_id: str, episode_dir: Path):
     shutil.copy(draft_path, approved_path)
     print(f"   Copied: {draft_path.name} → {approved_path.name}")
 
+    # Mirror to repo so Telegram bot can read/edit (data/podcast_episodes/<episode_id>/)
+    mirror_dir = REPO_ROOT / "data" / "podcast_episodes" / episode_id
+    mirror_draft = mirror_dir / "script_draft.md"
+    mirror_approved = mirror_dir / "script_approved.md"
+    if mirror_draft.exists():
+        shutil.copy(mirror_draft, mirror_approved)
+        print(f"   Mirror: {mirror_draft.name} → {mirror_approved.name}")
+
     # Update state.json
     state_path = episode_dir / "state.json"
     with open(state_path) as f:

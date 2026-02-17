@@ -182,7 +182,7 @@ This podcast IS about:
 
 ## Your Task
 
-Generate a podcast script based on the user's idea below. Follow the structure, style, and tone guidelines above. Write as Tony speaking from the middle of the parenting journey, not looking back from wisdom, but figuring it out in real-time.
+Generate a podcast script based on the user's idea below. Follow the structure, style, and tone guidelines above. Write as Tony speaking from the middle of the parenting journey, not looking back from wisdom, but figuring it out in real-time. When the topic relates to a prior episode, reference it by number (e.g. "We talked about sleep regression in episode 8"). You will be given prior episode titles and show notes when available.
 
 **User's Episode Idea:**
 {USER_IDEA}

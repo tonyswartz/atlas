@@ -244,7 +244,13 @@ def sync_podcast_history(podcast_name: str, config: dict) -> bool:
     content = build_history_md(podcast_config, episodes)
     history_file.write_text(content, encoding="utf-8")
 
-    print(f"   ✅ Wrote {len(episodes)} episodes → {history_file.name}")
+    # Mirror to repo for script_generator prior-episode context
+    repo_history_dir = REPO_ROOT / "data" / "podcast_history"
+    repo_history_dir.mkdir(parents=True, exist_ok=True)
+    repo_history_file = repo_history_dir / f"{podcast_name}.md"
+    repo_history_file.write_text(content, encoding="utf-8")
+
+    print(f"   ✅ Wrote {len(episodes)} episodes → {history_file.name} (repo: {repo_history_file.name})")
     return True
 
 

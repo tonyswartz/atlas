@@ -25,7 +25,7 @@ from telegram.constants import ChatAction
 
 from config import load_config, get_repo_root
 from conversation import handle_message, reset_session, handle_models_command
-from commands import route as route_command, get_trial_prep_message, get_code_directive, get_rotary_directive, get_schedule_directive, get_episode_directive, get_build_directive, trigger_restart, can_restart
+from commands import route as route_command, get_trial_prep_message, get_code_directive, get_rotary_directive, get_schedule_directive, get_episode_directive, get_episode_directive_for_episode_id, get_build_directive, trigger_restart, can_restart
 from group_manager import register_chat
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -87,10 +87,22 @@ async def _handle_podcast_reply(update: Update, reply_to_msg_id: int, text: str)
     if str(reply_to_msg_id) in prompts_data.get("prompts", {}):
         prompt_info = prompts_data["prompts"][str(reply_to_msg_id)]
         podcast = prompt_info["podcast"]
+        idea_text = text.strip()
 
-        logger.info(f"Detected reply to {podcast} podcast prompt - creating episode")
+        # If user explicitly says /explore, /solo, or /832, use that podcast (override reply context)
+        if re.match(r'/explore\s', idea_text, re.IGNORECASE):
+            podcast = "explore"
+            idea_text = re.sub(r'^/explore\s+', '', idea_text, flags=re.IGNORECASE).strip()
+        elif re.match(r'/solo\s', idea_text, re.IGNORECASE):
+            podcast = "sololaw"
+            idea_text = re.sub(r'^/solo\s+', '', idea_text, flags=re.IGNORECASE).strip()
+        elif re.match(r'/832\s', idea_text, re.IGNORECASE):
+            podcast = "832weekends"
+            idea_text = re.sub(r'^/832\s+', '', idea_text, flags=re.IGNORECASE).strip()
 
-        result_json = execute("podcast_create_episode", {"podcast": podcast, "idea": text})
+        logger.info(f"Detected reply to podcast prompt - creating episode for {podcast}")
+
+        result_json = execute("podcast_create_episode", {"podcast": podcast, "idea": idea_text if idea_text else text})
         result = json.loads(result_json)
 
         if result.get("success"):
@@ -361,6 +373,23 @@ async def on_message(update: Update, context) -> None:
                         episode_directive = get_episode_directive(text)
                         if episode_directive is not None:
                             text = episode_directive
+                        elif update.message.reply_to_message:
+                            # Reply to script preview / final audio: inject episode context so bot can read/edit
+                            import json
+                            reply_to_msg_id = update.message.reply_to_message.message_id
+                            prompts_file = get_repo_root() / "data" / "podcast_prompts.json"
+                            try:
+                                with open(prompts_file) as f:
+                                    prompts_data = json.load(f)
+                                episode_id = None
+                                if str(reply_to_msg_id) in prompts_data.get("script_previews", {}):
+                                    episode_id = prompts_data["script_previews"][str(reply_to_msg_id)]["episode_id"]
+                                elif str(reply_to_msg_id) in prompts_data.get("final_audio", {}):
+                                    episode_id = prompts_data["final_audio"][str(reply_to_msg_id)]["episode_id"]
+                                if episode_id:
+                                    text = get_episode_directive_for_episode_id(episode_id) + "\n\n--- User message ---\n\n" + text
+                            except (FileNotFoundError, json.JSONDecodeError):
+                                pass
 
     # --- Start continuous typing indicator ---
     typing_enabled = config.get("bot", {}).get("typing_indicator", True)

@@ -152,7 +152,7 @@ Master list of tools and their functions. Before writing new code, check this li
 | `tools/podcast/schedule_manager.py` | Check Schedule.md for upcoming episodes; format as episode idea; remove published entries. CLI: `python tools/podcast/schedule_manager.py <podcast_id>` or `--remove <date>`. |
 | `tools/podcast/weekly_prompt.py` | Send weekly episode idea request via Telegram (scheduled per podcast: Mon/Wed/Fri 5 PM). |
 | `tools/podcast/idea_processor.py` | Parse user idea reply, create episode record, trigger script generation. |
-| `tools/podcast/script_generator.py` | Generate podcast script via Claude + hardprompt; validates length, sends preview to Telegram. |
+| `tools/podcast/script_generator.py` | Generate podcast script via Claude + hardprompt; validates length, sends full script to Telegram (chunked if needed). |
 | `tools/podcast/script_approver.py` | Poll for user approval (checks `.approved` marker or state.json flag), trigger TTS when approved. |
 | `tools/podcast/tts_synthesizer.py` | Convert script to speech via ElevenLabs/Deepgram TTS; saves audio file, triggers mixing. |
 | `tools/podcast/audio_mixer.py` | Overlay music bed under voice via ffmpeg; applies fades, adjusts levels, sends final audio to Telegram. |

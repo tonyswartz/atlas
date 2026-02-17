@@ -162,6 +162,8 @@ def _execute_sync(tool_name: str, tool_input: dict) -> str:
             return _read_file(tool_input)
         elif tool_name == "list_files":
             return _list_files(tool_input)
+        elif tool_name == "edit_file":
+            return _edit_file(tool_input)
         elif tool_name == "reminder_add":
             return _reminder_add(tool_input)
         elif tool_name == "reminder_mark_done":
@@ -893,7 +895,36 @@ def _read_file(inp: dict) -> str:
             return json.dumps({"success": False, "error": "Access denied to sensitive file."})
 
     if not target.is_file():
-        return json.dumps({"success": False, "error": f"File not found: {raw}"})
+        # Lazy backfill: episode script mirror may not exist for episodes created before mirror existed
+        parts = rel_path.parts
+        if len(parts) == 4 and parts[0] == "data" and parts[1] == "podcast_episodes" and parts[3] in ("script_draft.md", "script_approved.md"):
+            episode_id = parts[2]
+            try:
+                config_path = REPO_ROOT / "agents" / "podcast" / "args" / "podcast.yaml"
+                import yaml
+                with open(config_path) as f:
+                    config = yaml.safe_load(f)
+                episodes_base = Path(config["paths"]["episodes_dir"])
+                if episode_id.count("-") >= 2 and episode_id.split("-")[0].isdigit():
+                    episode_dir = episodes_base / episode_id
+                else:
+                    segs = episode_id.split("-", 1)
+                    podcast_short = segs[0]
+                    ep_num = segs[1]
+                    podcast_full_name = next((c["name"] for k, c in config["podcasts"].items() if k == podcast_short), None)
+                    if not podcast_full_name:
+                        return json.dumps({"success": False, "error": f"File not found: {raw}"})
+                    episode_dir = episodes_base / podcast_full_name / ep_num
+                obsidian_script = episode_dir / parts[3]
+                if obsidian_script.is_file():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.copy2(obsidian_script, target)
+                else:
+                    return json.dumps({"success": False, "error": f"File not found: {raw}"})
+            except Exception as e:
+                logger.warning("read_file episode backfill failed: %s", e)
+                return json.dumps({"success": False, "error": f"File not found: {raw}"})
     try:
         return target.read_text(encoding="utf-8")
     except OSError as e:
@@ -918,6 +949,64 @@ def _list_files(inp: dict) -> str:
             continue
         items.append({"name": p.name, "type": "dir" if p.is_dir() else "file"})
     return json.dumps({"success": True, "path": raw or ".", "entries": items}, indent=2)
+
+
+def _edit_file(inp: dict) -> str:
+    """Edit a file in the repo. Only allows data/podcast_episodes/<episode_id>/*.md; syncs to Obsidian."""
+    raw = (inp.get("path") or "").strip()
+    content = inp.get("content")
+    if not raw:
+        return json.dumps({"success": False, "error": "path is required."})
+    if content is None:
+        return json.dumps({"success": False, "error": "content is required."})
+
+    target = (REPO_ROOT / raw).resolve()
+    try:
+        rel_path = target.relative_to(REPO_ROOT.resolve())
+    except ValueError:
+        return json.dumps({"success": False, "error": "Path is outside the repo."})
+
+    # Only allow episode script paths: data/podcast_episodes/<episode_id>/script_*.md
+    parts = rel_path.parts
+    if len(parts) != 4 or parts[0] != "data" or parts[1] != "podcast_episodes" or parts[3] not in ("script_draft.md", "script_approved.md"):
+        return json.dumps({"success": False, "error": "edit_file only allows data/podcast_episodes/<episode_id>/script_draft.md or script_approved.md"})
+
+    episode_id = parts[2]  # e.g. sololaw-031
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError as e:
+        logger.warning("edit_file write failed: %s", e)
+        return json.dumps({"success": False, "error": USER_FACING_ERROR})
+
+    # Sync to Obsidian when possible
+    try:
+        config_path = REPO_ROOT / "agents" / "podcast" / "args" / "podcast.yaml"
+        import yaml
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+        episodes_base = Path(config["paths"]["episodes_dir"])
+        if episode_id.count("-") >= 2 and episode_id.split("-")[0].isdigit():
+            episode_dir = episodes_base / episode_id
+        else:
+            segs = episode_id.split("-", 1)
+            podcast_short = segs[0]
+            ep_num = segs[1]
+            podcast_full_name = None
+            for name, podcast_config in config["podcasts"].items():
+                if name == podcast_short:
+                    podcast_full_name = podcast_config["name"]
+                    break
+            if not podcast_full_name:
+                return json.dumps({"success": True, "message": "Script updated in repo. Obsidian sync skipped (unknown podcast)."})
+            episode_dir = episodes_base / podcast_full_name / ep_num
+        obsidian_file = episode_dir / parts[-1]
+        if episode_dir.exists():
+            obsidian_file.write_text(content, encoding="utf-8")
+            return json.dumps({"success": True, "message": "Script updated and synced to Obsidian."})
+    except Exception as e:
+        logger.warning("edit_file Obsidian sync failed: %s", e)
+    return json.dumps({"success": True, "message": "Script updated in repo. Obsidian sync skipped (path not available)."})
 
 
 def _reminder_add(inp: dict) -> str:
@@ -1372,9 +1461,16 @@ def _podcast_approve_script(inp: dict) -> str:
         if not draft_path.exists():
             return json.dumps({"success": False, "error": "Script draft not found"})
 
-        # Copy draft to approved
+        # Copy draft to approved (Obsidian)
         import shutil
         shutil.copy2(draft_path, approved_path)
+
+        # Mirror to repo so bot can read/edit
+        mirror_dir = REPO_ROOT / "data" / "podcast_episodes" / episode_id
+        mirror_draft = mirror_dir / "script_draft.md"
+        mirror_approved = mirror_dir / "script_approved.md"
+        if mirror_draft.exists():
+            shutil.copy2(mirror_draft, mirror_approved)
 
         # Store one-off pronunciation fixes in state if provided
         if pronunciation_fixes:

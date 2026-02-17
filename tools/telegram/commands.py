@@ -717,9 +717,11 @@ Available tools:
 - edit_file: Edit the script directly (use carefully - prefer showing preview first)
 
 Steps:
-1. Determine the podcast and episode number from context
-2. Use read_file to load the current script from the episode's script_approved.md file
-   - Path: /Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Podcasts/<Podcast Name>/<episode_number>/script_approved.md
+1. Determine the podcast and episode number from context (episode_id format: sololaw-031, 832weekends-001, explore-005)
+2. Use read_file to load the current script. Path is **inside the repo** (so the bot can access it):
+   - **Approved script**: data/podcast_episodes/<episode_id>/script_approved.md
+   - **Draft only**: data/podcast_episodes/<episode_id>/script_draft.md
+   Example: data/podcast_episodes/sololaw-031/script_approved.md
 3. Show the user what's currently in the episode (or relevant section)
 4. Ask what they want to change:
    - Edit the script text (specific paragraphs or whole script)
@@ -729,7 +731,7 @@ Steps:
 5. For script edits:
    - Show them the before/after
    - Ask for confirmation
-   - Use edit_file to update script_approved.md
+   - Use edit_file to update data/podcast_episodes/<episode_id>/script_approved.md (or script_draft.md if still draft). Edits sync to Obsidian automatically.
    - Then offer to regenerate audio
 6. For audio regeneration:
    - **Paragraph-level**: Use podcast_regenerate_paragraph (faster, ~$0.50-1.00)
@@ -775,6 +777,11 @@ def get_episode_directive(text: str) -> str | None:
         return EPISODE_DIRECTIVE + f"\n\nThe user wants to work on Explore with Tony episode {episode_num} (episode_id: explore-{episode_num})"
 
     return None
+
+
+def get_episode_directive_for_episode_id(episode_id: str) -> str:
+    """Return the episode directive when we already know episode_id (e.g. from reply to script preview)."""
+    return EPISODE_DIRECTIVE + f"\n\nThe user is replying about episode {episode_id}. Use this episode_id for read_file and edit_file paths."
 
 
 # ---------------------------------------------------------------------------

@@ -119,7 +119,7 @@ Aim for the middle of the range unless the idea calls for brevity or depth.
 
 ## Your Task
 
-Generate a podcast script based on the user's idea below. Follow the structure, style, and tone guidelines above. Write as Tony speaking directly to the listener.
+Generate a podcast script based on the user's idea below. Follow the structure, style, and tone guidelines above. Write as Tony speaking directly to the listener. When the topic relates to a prior episode, reference it by number (e.g. "We did a deeper dive on Lisbon in episode 12"). You will be given prior episode titles and show notes when available.
 
 **User's Episode Idea:**
 {USER_IDEA}

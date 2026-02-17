@@ -13,6 +13,7 @@ import sys
 import json
 import yaml
 import argparse
+import time
 from pathlib import Path
 from datetime import datetime
 import urllib.request
@@ -48,7 +49,30 @@ def load_context_examples(podcast_name: str) -> str:
     return ""
 
 
-def call_minimax(hardprompt: str, user_idea: str, examples: str = "") -> str:
+def load_prior_episodes(podcast_name: str) -> str:
+    """Load episode history (titles, show notes) so the script can reference prior episodes when topical."""
+    repo_history_dir = REPO_ROOT / "data" / "podcast_history"
+    repo_history = repo_history_dir / f"{podcast_name}.md"
+    if repo_history.exists():
+        return repo_history.read_text(encoding="utf-8")
+    # Backfill from Obsidian if available (e.g. existing history not yet mirrored)
+    try:
+        config = load_config()
+        if podcast_name in config.get("podcasts", {}):
+            obsidian_base = Path(config["paths"]["obsidian_podcasts"])
+            display_name = config["podcasts"][podcast_name]["name"]
+            obsidian_history = obsidian_base / f"{display_name} - Episode History.md"
+            if obsidian_history.exists():
+                content = obsidian_history.read_text(encoding="utf-8")
+                repo_history_dir.mkdir(parents=True, exist_ok=True)
+                repo_history.write_text(content, encoding="utf-8")
+                return content
+    except Exception:
+        pass
+    return ""
+
+
+def call_minimax(hardprompt: str, user_idea: str, examples: str = "", prior_episodes: str = "") -> str:
     """
     Call MiniMax API to generate script.
 
@@ -56,6 +80,7 @@ def call_minimax(hardprompt: str, user_idea: str, examples: str = "") -> str:
         hardprompt: The hardprompt template with instructions
         user_idea: The user's episode idea
         examples: Optional example scripts for reference
+        prior_episodes: Optional episode history (titles, show notes) to reference when topical
 
     Returns:
         Generated script text
@@ -76,6 +101,17 @@ def call_minimax(hardprompt: str, user_idea: str, examples: str = "") -> str:
         "role": "user",
         "content": system_prompt
     })
+
+    # Add prior episodes for reference when topical (e.g. "In episode 15 we covered Kanban")
+    if prior_episodes.strip():
+        messages.append({
+            "role": "user",
+            "content": "**Prior episodes for this podcast** (when the current topic relates to a past episode, reference it by number so listeners can go back, e.g. \"We talked about Kanban boards in episode 15 — check that out if you want the full framework.\"):\n\n" + prior_episodes.strip()
+        })
+        messages.append({
+            "role": "assistant",
+            "content": "I've noted the prior episodes and will reference them by number when relevant."
+        })
 
     # Add examples as context if available
     if examples:
@@ -203,6 +239,42 @@ def send_telegram(message: str, chat_id: str = None) -> dict:
     return {"success": False, "message_id": None}
 
 
+# Telegram sendMessage limit is 4096; use 4000 to leave room for Markdown
+TELEGRAM_MAX_LEN = 4000
+
+
+def _send_telegram_chunked(script: str, prefix: str = "") -> None:
+    """Send full script in one or more messages, splitting at newlines if over limit."""
+    if not script.strip():
+        return
+    text = (prefix + script).strip() if prefix else script
+    if len(text) <= TELEGRAM_MAX_LEN:
+        send_telegram(text)
+        return
+    chunks = []
+    current = []
+    current_len = 0
+    for line in script.split("\n"):
+        line_len = len(line) + 1
+        if current_len + line_len > TELEGRAM_MAX_LEN and current:
+            chunks.append("\n".join(current))
+            current = [line]
+            current_len = line_len
+        else:
+            current.append(line)
+            current_len += line_len
+    if current:
+        chunks.append("\n".join(current))
+    for i, chunk in enumerate(chunks):
+        if i == 0 and prefix:
+            chunk = prefix + chunk
+        elif i > 0:
+            chunk = f"{prefix}(continued)\n\n{chunk}" if prefix else f"(continued)\n\n{chunk}"
+        send_telegram(chunk)
+        if i < len(chunks) - 1:
+            time.sleep(0.3)
+
+
 def generate_script(episode_id: str):
     """
     Generate script for an episode.
@@ -255,13 +327,16 @@ def generate_script(episode_id: str):
     print(f"Episode ID: {episode_id}")
     print(f"User idea: {user_idea[:100]}...")
 
-    # Load hardprompt and examples
+    # Load hardprompt, examples, and prior episode history (for topical references)
     hardprompt = load_hardprompt(podcast_name)
     examples = load_context_examples(podcast_name)
+    prior_episodes = load_prior_episodes(podcast_name)
+    if prior_episodes:
+        print("   Loaded prior episode history for topical references")
 
     # Generate script
     print("\nCalling Claude API...")
-    script = call_minimax(hardprompt, user_idea, examples)
+    script = call_minimax(hardprompt, user_idea, examples, prior_episodes)
 
     # Validate script
     is_valid, message, stats = validate_script(script, podcast_config)
@@ -271,10 +346,16 @@ def generate_script(episode_id: str):
     if not is_valid:
         print("Warning: Script validation failed, but saving anyway for manual review")
 
-    # Save script (episodes_dir now points to Obsidian vault)
+    # Save script to Obsidian (primary) and repo mirror (for Telegram bot read_file/edit_file)
     script_path = episode_dir / "script_draft.md"
     script_path.write_text(script, encoding="utf-8")
     print(f"\nScript saved to: {script_path}")
+
+    mirror_dir = REPO_ROOT / "data" / "podcast_episodes" / episode_id
+    mirror_dir.mkdir(parents=True, exist_ok=True)
+    mirror_path = mirror_dir / "script_draft.md"
+    mirror_path.write_text(script, encoding="utf-8")
+    print(f"   Mirror: {mirror_path}")
 
     # Update state
     state["status"] = "script_draft"
@@ -286,25 +367,21 @@ def generate_script(episode_id: str):
     with open(state_path, "w") as f:
         json.dump(state, f, indent=2)
 
-    # Send preview to Telegram
-    preview = script[:500] + "..." if len(script) > 500 else script
-    telegram_message = f"""🎙️ **{podcast_config['name']}** - Script Draft Ready
+    # Send to Telegram: header (for approval reply) then full script
+    header_message = f"""🎙️ **{podcast_config['name']}** - Script Draft Ready
 
 **Episode**: {state.get('title', episode_id)}
 **Word Count**: {stats['word_count']} words
 **Duration**: ~{stats['estimated_duration_seconds']//60}:{stats['estimated_duration_seconds']%60:02d}
 
-**Preview**:
-{preview}
-
-📄 Full script: `{script_path}`
-
-Reply **[approved]** to proceed to voice synthesis, or edit the script manually and then approve.
+Full script follows below. Reply **[approved]** to proceed to voice synthesis, or edit the script manually and then approve.
 """
-
-    result = send_telegram(telegram_message)
+    result = send_telegram(header_message)
     if result["success"]:
-        print("\n✅ Preview sent to Telegram")
+        print("\n✅ Header sent to Telegram")
+        # Send full episode text (chunked if over Telegram limit)
+        _send_telegram_chunked(script, prefix="📄 **Full script**\n\n")
+        print("✅ Full script sent to Telegram")
 
         # Store message ID for approval detection
         if result["message_id"]:

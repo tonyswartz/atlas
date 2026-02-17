@@ -745,6 +745,8 @@ def mix_episode(episode_id: str):
     state["mixed_at"] = datetime.now().isoformat()
     state["final_file"] = str(output_file)
     state["music_beds_used"] = [str(m) for m in music_beds]
+    if not state.get("actual_duration_seconds"):
+        state["actual_duration_seconds"] = int(duration)
 
     with open(state_path, "w") as f:
         json.dump(state, f, indent=2)
@@ -766,6 +768,13 @@ def mix_episode(episode_id: str):
 
     # Generate show notes
     generate_show_notes(episode_id, episode_dir, podcast_name, state)
+
+    # Update episode history (Obsidian + repo mirror for script generation)
+    try:
+        from tools.podcast.update_history import update_history
+        update_history(episode_id)
+    except Exception as e:
+        print(f"⚠️  Episode history update failed: {e}")
 
     # Export to Obsidian vault
     export_to_obsidian(episode_id, episode_dir, podcast_config['name'], state)

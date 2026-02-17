@@ -111,10 +111,17 @@ def update_history(episode_id: str):
     # Append to history
     history_content = existing_content + new_entry
 
-    # Write updated history
+    # Write to Obsidian
     history_file.write_text(history_content, encoding="utf-8")
 
+    # Mirror to repo so script_generator can load prior episodes (no Dropbox needed)
+    repo_history_dir = REPO_ROOT / "data" / "podcast_history"
+    repo_history_dir.mkdir(parents=True, exist_ok=True)
+    repo_history_file = repo_history_dir / f"{podcast_name}.md"
+    repo_history_file.write_text(history_content, encoding="utf-8")
+
     print(f"✅ Updated history: {history_file}")
+    print(f"   Repo mirror: {repo_history_file}")
     print(f"   Episode: {episode_number}")
     print(f"   Title: {title}")
 

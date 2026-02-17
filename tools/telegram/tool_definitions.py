@@ -393,6 +393,27 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "edit_file",
+            "description": "Edit a podcast episode script in the repo. Use when the user approves script changes. Only works for paths under data/podcast_episodes/<episode_id>/ (e.g. data/podcast_episodes/sololaw-031/script_approved.md). Changes are synced to Obsidian automatically.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Repo-relative path, e.g. 'data/podcast_episodes/sololaw-031/script_approved.md' or '.../script_draft.md'."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full new content of the file (replaces entire file)."
+                    }
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "reminder_add",
             "description": "Add a reminder to Tony Reminders.md. Use when the user says 'remind me to...', 'add a reminder', or similar. Supports scheduling: weekly <day>, daily, monthly, tomorrow, in N days, next <weekday>, specific dates (2/15, feb 15). Omit schedule for today.",
             "parameters": {
