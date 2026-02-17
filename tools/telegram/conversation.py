@@ -898,27 +898,25 @@ async def handle_message(text: str, user_id: int) -> str:
         # Debug logging
         logger.info(f"OpenRouter response - content: {repr(message.content)}, tool_calls: {bool(tool_calls)}, finish_reason: {response.choices[0].finish_reason}")
 
-        # Append assistant message to history (must include tool_calls for round-trip)
-        # For tool round-trip: do NOT modify content — MiniMax (2013) requires the exact
-        # assistant message so "tool call result" can follow the same tool call. Strip <think>
-        # only when returning final text to the user.
         content = message.content or ""
+
+        # Build assistant message for next API call. MiniMax (2013) requires the exact
+        # assistant message and matching tool_call_id; use the raw response structure.
         if tool_calls:
-            # Preserve full content for next API call (required for tool_call_id validation)
-            assistant_content = content
+            raw = message.model_dump()
+            assistant_msg = {
+                "role": raw.get("role", "assistant"),
+                "content": raw.get("content") or "",
+                "tool_calls": raw.get("tool_calls") or [],
+            }
+            # Drop response-only keys if present (refusal, annotations, audio, etc.)
+            assistant_msg = {k: v for k, v in assistant_msg.items() if k in ("role", "content", "tool_calls") and (v is not None or k == "content")}
+            if assistant_msg.get("content") is None:
+                assistant_msg["content"] = ""
         else:
             assistant_content = _strip_think(content) if (used_provider == "minimax" and content) else content
-        assistant_msg = {"role": "assistant", "content": assistant_content}
-        if tool_calls:
-            assistant_msg["tool_calls"] = [
-                {
-                    "id": tc.id if tc.id is not None else f"tool_call_{tc.function.name}_{_round}",
-                    "type": "function",
-                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                }
-                for tc in tool_calls
-            ]
-        # Persist a stripped copy so history doesn't bloat with <think>; api_messages keeps full for 2013.
+            assistant_msg = {"role": "assistant", "content": assistant_content}
+
         to_persist = {"role": "assistant", "content": _strip_think(content) if (used_provider == "minimax" and content) else (content or "")}
         if tool_calls:
             to_persist["tool_calls"] = assistant_msg["tool_calls"]
@@ -972,10 +970,11 @@ async def handle_message(text: str, user_id: int) -> str:
             # APIs (e.g. MiniMax) require tool result content to be a string
             result_content = "" if result_str is None else str(result_str)
 
+            # Use exact id from response (string) so MiniMax 2013 validation passes
             tc_id = tc.id if tc.id is not None else f"tool_call_{tc.function.name}_{_round}"
             tool_result_msg = {
                 "role": "tool",
-                "tool_call_id": tc_id,
+                "tool_call_id": str(tc_id),
                 "content": result_content,
             }
             session["messages"].append(tool_result_msg)
