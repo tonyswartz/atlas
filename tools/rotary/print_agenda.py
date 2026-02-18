@@ -26,6 +26,10 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+# Add repo root to sys.path for common imports
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
 # Obsidian vault Rotary paths (must match tool_runner.py)
 VAULT_ROTARY = Path("/Users/printer/Library/CloudStorage/Dropbox/Obsidian/Tony's Vault/Rotary")
 ROTARY_MEETINGS = VAULT_ROTARY / "Meetings"
@@ -169,8 +173,11 @@ def markdown_to_pdf(md_path: Path, pdf_path: Path, one_page: bool = True) -> boo
 
 
 def send_telegram(message: str) -> bool:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip() or os.environ.get("TELEGRAM_ID", "").strip()
+    # Use centralized credential loader (tries envchain, falls back to .env)
+    from tools.common.credentials import get_credential
+
+    token = get_credential("TELEGRAM_BOT_TOKEN")
+    chat_id = get_credential("TELEGRAM_CHAT_ID") or get_credential("TELEGRAM_ID")
     if not token or not chat_id:
         return False
     url = f"https://api.telegram.org/bot{token}/sendMessage"

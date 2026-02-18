@@ -580,13 +580,12 @@ def format_brief() -> str:
     today_dt_brief = now.date()
     today_tasks = [t for t in tasks if t.get("due_dt") == today_dt_brief]
     overdue_tasks = [t for t in tasks if t.get("due_dt") and t["due_dt"] < today_dt_brief]
-    upcoming_tasks = [t for t in tasks if t.get("due_dt") and t["due_dt"] > today_dt_brief]
-    no_date_tasks = [t for t in tasks if not t.get("due_dt")]
+    # Only show overdue and today tasks in daily brief
     shown = 0
     max_tasks = 15
-    for item in overdue_tasks + today_tasks + upcoming_tasks + no_date_tasks:
+    for item in overdue_tasks + today_tasks:
         if shown >= max_tasks:
-            lines.append(f"• … and {len(tasks) - max_tasks} more (see Tony Tasks.md)")
+            lines.append(f"• … and {len(overdue_tasks + today_tasks) - max_tasks} more (see Tony Tasks.md)")
             break
         prefix = ""
         if item.get("due_dt"):
@@ -596,7 +595,7 @@ def format_brief() -> str:
                 prefix = "Today: "
         lines.append(f"• {prefix}{item['line']}")
         shown += 1
-    if not tasks:
+    if not (overdue_tasks or today_tasks):
         lines.append("• None")
     lines.append("")
     

@@ -524,11 +524,202 @@ def test_synthesis(text: str):
     print(f"\nPlay with: afplay {output_file}")
 
 
+def synthesize_next_paragraph_telegram(episode_id: str, paragraph_num: int):
+    """
+    Generate a single paragraph and send to Telegram for approval.
+    Used in --telegram-approval mode.
+    """
+    from tools.podcast.paragraph_approval_state import (
+        init_episode, mark_paragraph_pending, get_episode_state
+    )
+    from tools.common.credentials import get_telegram_token
+
+    config = load_config()
+
+    # Load episode directory and state
+    episodes_base = Path(config["paths"]["episodes_dir"])
+
+    if episode_id.count("-") >= 2 and episode_id.split("-")[0].isdigit():
+        episode_dir = episodes_base / episode_id
+    else:
+        parts = episode_id.split("-", 1)
+        podcast_name_short = parts[0]
+        episode_num = parts[1]
+        podcast_full_name = None
+        for name, podcast_config in config["podcasts"].items():
+            if name == podcast_name_short:
+                podcast_full_name = podcast_config["name"]
+                break
+        if not podcast_full_name:
+            raise ValueError(f"Unknown podcast short name: {podcast_name_short}")
+        episode_dir = episodes_base / podcast_full_name / episode_num
+
+    state_path = episode_dir / "state.json"
+    if not state_path.exists():
+        raise FileNotFoundError(f"Episode state not found: {state_path}")
+
+    with open(state_path) as f:
+        state = json.load(f)
+
+    podcast_name = state.get("podcast_name")
+    if not podcast_name or podcast_name not in config["podcasts"]:
+        raise ValueError(f"Unknown podcast: {podcast_name}")
+
+    podcast_config = config["podcasts"][podcast_name]
+
+    # Load and process script
+    script_path = episode_dir / "script_approved.md"
+    if not script_path.exists():
+        raise FileNotFoundError(f"Approved script not found: {script_path}")
+
+    script_text = script_path.read_text(encoding="utf-8")
+    script_text = strip_script_metadata(script_text)
+
+    # Apply pronunciation fixes
+    from tools.podcast.pronunciation import load_pronunciation_dict, apply_pronunciation_fixes
+
+    pron_dict = load_pronunciation_dict()
+    one_off_fixes = state.get("pronunciation_fixes", {})
+    script_text, _ = apply_pronunciation_fixes(script_text, pron_dict, one_off_fixes)
+
+    # Split into paragraphs
+    paragraphs = split_into_paragraphs(script_text)
+
+    # Initialize state if this is the first paragraph
+    if paragraph_num == 0:
+        init_episode(episode_id, len(paragraphs))
+        print(f"\n📄 Initialized {len(paragraphs)} paragraphs for Telegram approval")
+
+    # Validate paragraph number
+    if paragraph_num >= len(paragraphs):
+        raise ValueError(f"Paragraph {paragraph_num} out of range (0-{len(paragraphs)-1})")
+
+    para = paragraphs[paragraph_num]
+
+    # Create paragraphs directory
+    paragraphs_dir = episode_dir / "paragraphs"
+    paragraphs_dir.mkdir(exist_ok=True)
+
+    # Generate paragraph audio
+    voice_id = podcast_config.get("voice_id")
+    if not voice_id or voice_id == "VOICE_ID_PLACEHOLDER":
+        raise ValueError(f"Voice ID not configured for {podcast_name}")
+
+    para_file = paragraphs_dir / f"paragraph_{paragraph_num:03d}.mp3"
+
+    print(f"\n🎙️ Generating paragraph {paragraph_num}/{len(paragraphs)-1} ({para['word_count']} words)...")
+
+    provider = config["tts"]["provider"]
+    if provider == "elevenlabs":
+        call_elevenlabs(para["text"], voice_id, config, para_file)
+    else:
+        raise ValueError(f"Unsupported TTS provider: {provider}")
+
+    if not para_file.exists() or para_file.stat().st_size == 0:
+        raise RuntimeError(f"Paragraph audio not created: {para_file}")
+
+    para_duration = get_audio_duration(para_file)
+
+    print(f"   ✅ Generated {para_file.name} ({para_duration:.1f}s)")
+
+    # Update metadata
+    metadata_file = paragraphs_dir / "paragraph_metadata.json"
+    if metadata_file.exists():
+        with open(metadata_file) as f:
+            metadata = json.load(f)
+    else:
+        metadata = {"paragraphs": []}
+
+    # Update or add this paragraph's metadata
+    para_meta = {
+        "number": paragraph_num,
+        "text": para["text"][:200] + "..." if len(para["text"]) > 200 else para["text"],
+        "file": para_file.name,
+        "duration": round(para_duration, 2),
+        "word_count": para["word_count"],
+        "char_range": [para["start_char"], para["end_char"]]
+    }
+
+    # Replace existing or append
+    existing_idx = next((i for i, p in enumerate(metadata["paragraphs"]) if p["number"] == paragraph_num), None)
+    if existing_idx is not None:
+        metadata["paragraphs"][existing_idx] = para_meta
+    else:
+        metadata["paragraphs"].append(para_meta)
+
+    with open(metadata_file, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    # Send to Telegram
+    token = get_telegram_token()
+    if not token:
+        raise ValueError("TELEGRAM_BOT_TOKEN not found")
+
+    chat_id = config["telegram"].get("chat_id")
+    if "CHAT_ID_HERE" in str(chat_id):
+        chat_id = config["telegram"].get("fallback_chat_id", 8241581699)
+
+    # Full paragraph text
+    message = f"""🎙️ **Paragraph {paragraph_num + 1}/{len(paragraphs)}** ({para['word_count']} words, {para_duration:.1f}s)
+
+_{para["text"]}_
+
+Reply:
+• **good** / **✓** → approve and continue
+• **redo** → regenerate this paragraph
+• **stop** → pause workflow"""
+
+    # Send text message
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = json.dumps({
+        "chat_id": str(chat_id),
+        "text": message,
+        "parse_mode": "Markdown"
+    }).encode()
+
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            response = json.loads(resp.read())
+            text_message_id = response.get("result", {}).get("message_id")
+    except Exception as e:
+        raise RuntimeError(f"Failed to send Telegram message: {e}")
+
+    # Send audio file
+    audio_url = f"https://api.telegram.org/bot{token}/sendAudio"
+
+    result = subprocess.run([
+        "curl", "-s",
+        "-F", f"chat_id={chat_id}",
+        "-F", f"audio=@{para_file}",
+        "-F", f"title=Paragraph {paragraph_num + 1}",
+        "-F", f"performer={podcast_config['name']}",
+        "-F", f"reply_to_message_id={text_message_id}",
+        audio_url
+    ], capture_output=True, text=True, timeout=60)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to send audio: {result.stderr}")
+
+    audio_response = json.loads(result.stdout)
+    if not audio_response.get("ok"):
+        raise RuntimeError(f"Telegram audio upload failed: {audio_response.get('description')}")
+
+    # Save message ID and chat ID to state
+    mark_paragraph_pending(episode_id, paragraph_num, text_message_id, int(chat_id))
+
+    print(f"   📱 Sent to Telegram (message {text_message_id}, chat {chat_id})")
+    print(f"\n✅ Paragraph {paragraph_num + 1}/{len(paragraphs)} sent. Waiting for approval...")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Synthesize podcast audio using TTS")
     parser.add_argument("--episode-id", help="Episode ID to synthesize")
     parser.add_argument("--test", action="store_true", help="Test mode")
     parser.add_argument("--text", help="Text for test mode")
+    parser.add_argument("--telegram-approval", action="store_true", help="Generate one paragraph and send to Telegram for approval")
+    parser.add_argument("--paragraph-num", type=int, help="Specific paragraph number to generate (for --telegram-approval mode)")
 
     args = parser.parse_args()
 
@@ -536,6 +727,28 @@ def main():
         if not args.text:
             parser.error("--test requires --text")
         test_synthesis(args.text)
+    elif args.telegram_approval:
+        if not args.episode_id:
+            parser.error("--telegram-approval requires --episode-id")
+
+        # Determine paragraph number
+        if args.paragraph_num is not None:
+            para_num = args.paragraph_num
+        else:
+            # Find next paragraph from state
+            from tools.podcast.paragraph_approval_state import get_episode_state, get_next_paragraph_number
+
+            episode_state = get_episode_state(args.episode_id)
+            if episode_state:
+                para_num = get_next_paragraph_number(args.episode_id)
+                if para_num is None:
+                    print("All paragraphs are either pending approval or completed.")
+                    sys.exit(0)
+            else:
+                # Start from paragraph 0
+                para_num = 0
+
+        synthesize_next_paragraph_telegram(args.episode_id, para_num)
     elif args.episode_id:
         synthesize_episode(args.episode_id)
     else:

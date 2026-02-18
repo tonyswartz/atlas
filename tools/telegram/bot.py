@@ -13,6 +13,7 @@ import sys
 import asyncio
 import logging
 import re
+import subprocess
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -86,9 +87,186 @@ async def _handle_podcast_reply(update: Update, reply_to_msg_id: int, text: str)
     text_lower = text.lower().strip()
 
     # Keywords for different actions
-    approval_keywords = ["approved", "approve", "looks good", "lgtm", "go ahead", "yes", "proceed"]
+    approval_keywords = ["approved", "approve", "looks good", "lgtm", "go ahead", "yes", "proceed", "good", "✓", "ok"]
     regenerate_keywords = ["regenerate", "redo", "create new", "make new", "i edited", "edited the script",
                           "new version", "re-generate", "re-synthesize", "resynthesize"]
+
+    # 0. Check if replying to a paragraph approval message
+    from tools.podcast.paragraph_approval_state import (
+        find_episode_by_message_id, mark_paragraph_approved, mark_paragraph_regenerating,
+        get_episode_state, is_all_approved
+    )
+
+    # Get chat ID for verification
+    chat_id = update.message.chat_id
+
+    para_result = find_episode_by_message_id(reply_to_msg_id, chat_id)
+    if para_result:
+        episode_id, paragraph_num = para_result
+        episode_state = get_episode_state(episode_id)
+
+        if not episode_state:
+            logger.warning(f"Episode state not found for {episode_id}")
+            return False
+
+        # Check for stop command
+        if text_lower in ["stop", "pause", "cancel"]:
+            await update.message.reply_text(
+                f"⏸️ Paused paragraph approval for {episode_id}.\n\n"
+                f"Resume anytime by running:\n`/episode {episode_id}`",
+                parse_mode="Markdown"
+            )
+            return True
+
+        # Check for approval
+        is_approval = any(keyword in text_lower for keyword in approval_keywords)
+        is_regenerate = text_lower in ["redo", "regenerate", "re-do"]
+
+        if is_regenerate:
+            logger.info(f"Regenerating paragraph {paragraph_num} for {episode_id}")
+
+            # Mark as regenerating
+            mark_paragraph_regenerating(episode_id, paragraph_num)
+
+            await update.message.reply_text(
+                f"🔄 Regenerating paragraph {paragraph_num + 1}...",
+                parse_mode="Markdown"
+            )
+
+            # Trigger regeneration (async subprocess to avoid blocking event loop)
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                str(get_repo_root() / "tools" / "podcast" / "tts_synthesizer.py"),
+                "--telegram-approval",
+                "--episode-id", episode_id,
+                "--paragraph-num", str(paragraph_num),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+            except asyncio.TimeoutError:
+                process.kill()
+                await update.message.reply_text(
+                    f"❌ Regeneration timed out after 120 seconds",
+                    parse_mode="Markdown"
+                )
+                return True
+
+            if process.returncode != 0:
+                logger.error(f"Paragraph regeneration failed: {stderr.decode()}")
+                await update.message.reply_text(
+                    f"❌ Regeneration failed: {stderr.decode()[:200]}",
+                    parse_mode="Markdown"
+                )
+
+            return True
+
+        elif is_approval:
+            logger.info(f"Approved paragraph {paragraph_num} for {episode_id}")
+
+            # Get duration from metadata
+            from tools.podcast.tts_synthesizer import get_audio_duration, load_config
+            config_data = load_config()
+            episodes_base = Path(config_data["paths"]["episodes_dir"])
+
+            # Resolve episode directory
+            if episode_id.count("-") >= 2 and episode_id.split("-")[0].isdigit():
+                episode_dir = episodes_base / episode_id
+            else:
+                parts = episode_id.split("-", 1)
+                podcast_name_short = parts[0]
+                episode_num = parts[1]
+                podcast_full_name = None
+                for name, podcast_config in config_data["podcasts"].items():
+                    if name == podcast_name_short:
+                        podcast_full_name = podcast_config["name"]
+                        break
+                if podcast_full_name:
+                    episode_dir = episodes_base / podcast_full_name / episode_num
+                else:
+                    episode_dir = episodes_base / episode_id
+
+            para_file = episode_dir / "paragraphs" / f"paragraph_{paragraph_num:03d}.mp3"
+            duration = get_audio_duration(para_file) if para_file.exists() else None
+
+            # Mark as approved
+            mark_paragraph_approved(episode_id, paragraph_num, duration)
+
+            # Check if all paragraphs are approved
+            if is_all_approved(episode_id):
+                logger.info(f"All paragraphs approved for {episode_id} - triggering final mix")
+
+                await update.message.reply_text(
+                    f"✅ All paragraphs approved!\n\n🔗 Concatenating and mixing final audio...",
+                    parse_mode="Markdown"
+                )
+
+                # Trigger final concatenation and mixing (async subprocess)
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    str(get_repo_root() / "tools" / "podcast" / "paragraph_orchestrator.py"),
+                    "--finalize", episode_id,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                try:
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await update.message.reply_text(
+                        f"❌ Final mix timed out after 5 minutes",
+                        parse_mode="Markdown"
+                    )
+                    return True
+
+                if process.returncode != 0:
+                    logger.error(f"Final mix failed: {stderr.decode()}")
+                    await update.message.reply_text(
+                        f"❌ Final mix failed: {stderr.decode()[:200]}",
+                        parse_mode="Markdown"
+                    )
+            else:
+                # Get next paragraph number
+                from tools.podcast.paragraph_approval_state import get_progress_summary
+
+                progress = get_progress_summary(episode_id)
+
+                await update.message.reply_text(
+                    f"✅ Paragraph {paragraph_num + 1} approved!\n\n📊 Progress: {progress}\n\n🔄 Generating next paragraph...",
+                    parse_mode="Markdown"
+                )
+
+                # Trigger next paragraph generation (async subprocess)
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    str(get_repo_root() / "tools" / "podcast" / "tts_synthesizer.py"),
+                    "--telegram-approval",
+                    "--episode-id", episode_id,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                try:
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await update.message.reply_text(
+                        f"❌ Next paragraph timed out after 120 seconds",
+                        parse_mode="Markdown"
+                    )
+                    return True
+
+                if process.returncode != 0:
+                    logger.error(f"Next paragraph generation failed: {stderr.decode()}")
+                    await update.message.reply_text(
+                        f"❌ Next paragraph failed: {stderr.decode()[:200]}",
+                        parse_mode="Markdown"
+                    )
+
+            return True
 
     # 1. Check if replying to a podcast prompt (episode idea)
     if str(reply_to_msg_id) in prompts_data.get("prompts", {}):

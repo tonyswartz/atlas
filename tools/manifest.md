@@ -144,6 +144,8 @@ Master list of tools and their functions. Before writing new code, check this li
 | `tools/system/script_writer.py` | Generate Python scripts from natural language descriptions. Creates working scripts with error handling, logging, and atlas integration. CLI: --task "description" --output "path" --schedule "cron". Exposed as `script_writer` tool to Telegram bot LLM. |
 | `tools/system/launchd_manager.py` | Create, load, unload, and list launchd jobs for scheduled automation. Parses human-readable schedules (e.g., "daily at 9am", "every 5 minutes"). CLI: create/load/unload/list. Exposed as `launchd_manager` tool to Telegram bot LLM. |
 | `tools/system/launchd_config_checker.py` | **Automated launchd health checker** - runs daily at 3am via launchd; verifies all Atlas services have PYTHONDONTWRITEBYTECODE=1; auto-fixes missing config, reloads services, sends alerts. Prevents bytecode cache issues. |
+| `tools/system/cleanup_bytecode.sh` | **Daily bytecode cleanup** - runs every day at 5:55am (before 6am services) to delete ALL Python bytecode cache (`__pycache__/`, `*.pyc`). Ensures fresh imports daily. Part of 3-layer bytecode fix (see `docs/BYTECODE_PERMANENT_FIX.md`). |
+| `tools/system/add_python_B_flag.sh` | Adds Python `-B` flag to critical launchd services (makes Python ignore bytecode cache). Run manually to update service plists. Part of 3-layer bytecode fix. |
 | `tools/system/git_sync_and_restart.py` | Daily midnight: git fetch/pull/push to sync with GitHub; restarts Telegram bot if idle so it uses updated code. If bot is busy, sets pending flag; deferred job (every 10 min) restarts when idle. Run via launchd (com.atlas.git-sync, com.atlas.git-sync-deferred-restart). |
 
 ## Podcast Production (`tools/podcast/`)
@@ -155,8 +157,11 @@ Master list of tools and their functions. Before writing new code, check this li
 | `tools/podcast/idea_processor.py` | Parse user idea reply, create episode record, trigger script generation. |
 | `tools/podcast/script_generator.py` | Generate podcast script via Claude + hardprompt; validates length, sends full script to Telegram (chunked if needed). |
 | `tools/podcast/script_approver.py` | Poll for user approval (checks `.approved` marker or state.json flag), trigger TTS when approved. |
-| `tools/podcast/tts_synthesizer.py` | Convert script to speech via ElevenLabs/Deepgram TTS; saves audio file, triggers mixing. |
+| `tools/podcast/tts_synthesizer.py` | Convert script to speech via ElevenLabs/Deepgram TTS; saves audio file, triggers mixing. Supports `--telegram-approval` mode for paragraph-by-paragraph generation. |
 | `tools/podcast/audio_mixer.py` | Overlay music bed under voice via ffmpeg; applies fades, adjusts levels, sends final audio to Telegram. |
+| `tools/podcast/paragraph_approval_state.py` | State manager for paragraph-by-paragraph Telegram approval workflow; tracks approved/pending/regenerating status. CLI: status/clear commands. |
+| `tools/podcast/paragraph_orchestrator.py` | Orchestrates paragraph approval workflow: concatenates approved paragraphs, triggers mixing, resume interrupted workflows. CLI: --finalize/--resume/--status. |
+| `tools/podcast/regenerate_paragraph.py` | Regenerate a single paragraph by number; reassembles full audio without regenerating entire episode. Saves credits when fixing pronunciation issues. |
 | `tools/podcast/chapter_markers.py` | Add ID3 chapter markers to podcast episodes based on content analysis (90s minimum duration). |
 | `tools/podcast/quality_validator.py` | Pre-flight audio quality checks: clipping detection, silence periods, volume consistency. |
 | `tools/podcast/smart_pacing.py` | Analyze text to adjust TTS playback speed for better listening experience. |
