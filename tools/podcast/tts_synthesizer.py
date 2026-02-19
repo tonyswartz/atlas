@@ -166,6 +166,43 @@ def call_elevenlabs(text: str, voice_id: str, config: dict, output_file: Path):
         raise RuntimeError(f"ElevenLabs API error: {e.code} - {error_body}")
 
 
+def normalize_audio(audio_file: Path, target_lufs: float = -16.0):
+    """
+    Normalize audio to target loudness using ffmpeg.
+
+    Args:
+        audio_file: Path to audio file to normalize (will be overwritten)
+        target_lufs: Target loudness in LUFS (default: -16.0 for podcasts)
+    """
+    temp_file = audio_file.parent / f"{audio_file.stem}_temp{audio_file.suffix}"
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-i", str(audio_file),
+                "-af", f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11",
+                "-ar", "44100",
+                "-y",
+                str(temp_file)
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg normalization failed: {result.stderr}")
+
+        # Replace original with normalized
+        temp_file.replace(audio_file)
+
+    except Exception as e:
+        if temp_file.exists():
+            temp_file.unlink()
+        raise RuntimeError(f"Audio normalization failed: {e}")
+
+
 def get_audio_duration(audio_file: Path) -> float:
     """Get audio duration in seconds using ffprobe."""
     try:
@@ -397,6 +434,9 @@ def synthesize_episode(episode_id: str):
         if not para_file.exists() or para_file.stat().st_size == 0:
             raise RuntimeError(f"Paragraph audio not created: {para_file}")
 
+        # Normalize audio to podcast loudness standard
+        normalize_audio(para_file, target_lufs=-16.0)
+
         # Get duration
         para_duration = get_audio_duration(para_file)
 
@@ -617,6 +657,10 @@ def synthesize_next_paragraph_telegram(episode_id: str, paragraph_num: int):
 
     if not para_file.exists() or para_file.stat().st_size == 0:
         raise RuntimeError(f"Paragraph audio not created: {para_file}")
+
+    # Normalize audio to podcast loudness standard
+    print(f"   🔊 Normalizing audio...")
+    normalize_audio(para_file, target_lufs=-16.0)
 
     para_duration = get_audio_duration(para_file)
 
