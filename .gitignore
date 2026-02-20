@@ -38,6 +38,9 @@ data/*.json
 data/*.migrated
 !data/.gitkeep
 
+# Legal sanitization maps (contain PII → placeholder mappings)
+data/legal_sanitization_maps/
+
 # IDE
 .idea/
 *.swp

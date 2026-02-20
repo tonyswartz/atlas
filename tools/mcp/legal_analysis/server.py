@@ -77,10 +77,16 @@ class CaseSanitizer:
     def sanitize_text(self, text: str) -> tuple[str, dict]:
         """
         Sanitize text by replacing PII with placeholders.
+
+        Two-pass approach:
+        1. Extract names from structured fields (Defendant:, Officer:, etc.)
+        2. Replace ALL occurrences of those names throughout document
+
         Returns (sanitized_text, mapping_dict)
         """
         sanitized = text
         self.entity_map = {}
+        names_registry = set()  # Track all names to replace globally
 
         # Pass 1: Named Entity Recognition with spaCy
         if nlp:
@@ -104,23 +110,25 @@ class CaseSanitizer:
         name_field_pattern = r'(Defendant|Attorney|Prosecutor|Plaintiff|Respondent|Petitioner|Counsel for|Client(?:\s+Name)?|Subject(?:\s+Name)?|Officer(?:\s+Name)?|Deputy(?:\s+Name)?|Arresting Officer):\s+([A-Z][a-z]+(?:\s+[A-Z][a-z.]+){1,3})(?=\s+(?:Birth Date|DOB|SSN|IR #|\n|\t|$))'
         for match in re.finditer(name_field_pattern, text):
             name = match.group(2).strip()
+            names_registry.add(name)  # Add to global registry
             placeholder = self._get_person_placeholder(name)
             # Replace the whole match including the field label
             full_match = match.group(0)
             sanitized = sanitized.replace(full_match, f"{match.group(1)}: {placeholder}")
 
         # Case captions: "State v. Smith" -> "State v. [PERSON_1]"
-        sanitized = re.sub(
-            r'(State|People|Commonwealth)\s+v\.?\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?(?:\s+[A-Z][a-z]+)+)',
-            lambda m: f"{m.group(1)} v. {self._get_person_placeholder(m.group(2).strip())}",
-            sanitized
-        )
+        for match in re.finditer(r'(State|People|Commonwealth)\s+v\.?\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?(?:\s+[A-Z][a-z]+)+)', text):
+            name = match.group(2).strip()
+            names_registry.add(name)  # Add to global registry
+            placeholder = self._get_person_placeholder(name)
+            sanitized = sanitized.replace(match.group(0), f"{match.group(1)} v. {placeholder}")
 
         # Names with titles: Deputy Smith, Officer Jones, Trooper Brown, Sgt. Adams
         title_name_pattern = r'\b(Deputy|Officer|Trooper|Sgt\.?|Sergeant|Detective|Det\.?|Agent|Dr\.?|Mr\.?|Ms\.?|Mrs\.?)\s+([A-Z][a-z]+(?:\s+[A-Z]\.?\s*)?(?:\s+[A-Z][a-z]+)?)'
         for match in re.finditer(title_name_pattern, text):
             name = match.group(2).strip()
             if len(name.split()) >= 2 or len(name) > 4:  # Must be full name or longer single name
+                names_registry.add(name)  # Add to global registry
                 placeholder = self._get_person_placeholder(name)
                 sanitized = sanitized.replace(match.group(0), f"{match.group(1)} {placeholder}")
 
@@ -134,6 +142,7 @@ class CaseSanitizer:
                 parts.append(match.group(2).strip())
             parts.append(match.group(3))
             full_name = ' '.join(parts)
+            names_registry.add(full_name)  # Add to global registry
             placeholder = self._get_person_placeholder(full_name)
             sanitized = sanitized.replace(full_name, placeholder)
 
@@ -152,6 +161,7 @@ class CaseSanitizer:
                 # Only if it looks like a real name (not legal terms)
                 if full_name not in ['United States', 'Superior Court', 'District Court', 'County Attorney',
                                      'Prosecuting Attorney', 'Public Defender', 'Law Enforcement']:
+                    names_registry.add(full_name)  # Add to global registry
                     placeholder = self._get_person_placeholder(full_name)
                     sanitized = sanitized.replace(full_name, placeholder)
 
@@ -211,20 +221,74 @@ class CaseSanitizer:
             self.entity_map[placeholder] = match.group(0)
             sanitized = sanitized.replace(match.group(0), placeholder)
 
+        # Serial numbers (firearms, equipment, etc.)
+        # Match patterns like: ABC123456, 12-345678, SN: 123456
+        serial_pattern = r'\b(?:Serial\s+(?:Number|#)?:?\s*)?([A-Z]{2,}\d{5,}|\d{2,}-\d{5,})\b'
+        for match in re.finditer(serial_pattern, text, re.IGNORECASE):
+            placeholder = f"[SERIAL_{len([k for k in self.entity_map.keys() if k.startswith('[SERIAL')])+1:03d}]"
+            self.entity_map[placeholder] = match.group(0)
+            sanitized = sanitized.replace(match.group(0), placeholder)
+
+        # Badge numbers
+        badge_pattern = r'(?:Badge|ID)\s*#?:?\s*(\d{3,6})\b'
+        for match in re.finditer(badge_pattern, text, re.IGNORECASE):
+            placeholder = f"[BADGE_{len([k for k in self.entity_map.keys() if k.startswith('[BADGE')])+1:03d}]"
+            self.entity_map[placeholder] = match.group(0)
+            sanitized = sanitized.replace(match.group(0), placeholder)
+
+        # FINAL PASS: Replace ALL occurrences of names in registry throughout document
+        # This catches names in narrative text ("approached Fredrickson", "Alexander said", etc.)
+        for full_name in sorted(names_registry, key=len, reverse=True):  # Longest first to avoid partial matches
+            if full_name in self.entity_map.values():
+                # Find the placeholder for this name
+                placeholder = [k for k, v in self.entity_map.items() if v == full_name][0]
+            else:
+                # Create new placeholder
+                placeholder = self._get_person_placeholder(full_name)
+
+            # Replace full name with word boundaries
+            sanitized = re.sub(rf'\b{re.escape(full_name)}\b', placeholder, sanitized)
+
+            # Also replace individual name parts (first/last name used alone)
+            # But only if they're substantial (>3 chars) to avoid false positives
+            parts = full_name.split()
+            for part in parts:
+                part_clean = part.rstrip('.,')  # Remove trailing punctuation
+                if len(part_clean) > 3 and part_clean not in ['Field', 'Birth', 'Date']:  # Skip common words
+                    # Replace with word boundaries to avoid partial matches
+                    sanitized = re.sub(rf'\b{re.escape(part_clean)}\b', placeholder, sanitized)
+                    # Also catch form field concatenations like "LASTFredrickson", "FIRSTAlexander"
+                    sanitized = re.sub(rf'(LAST|FIRST|NAME:?){re.escape(part_clean)}\b',
+                                     rf'\1{placeholder}', sanitized, flags=re.IGNORECASE)
+
+        # Final cleanup: catch any remaining bare case numbers (single letter + 4-6 digits)
+        sanitized = re.sub(r'\b([A-Z])\s+(\d{4,6})\b', r'\1 [CASE_NUM_XXX]', sanitized)
+
         return sanitized, self.entity_map
 
     def _get_person_placeholder(self, name: str) -> str:
-        """Get or create placeholder for a person's name."""
+        """Get or create placeholder for a person's name using initials."""
         # Check if we already have a placeholder for this name
         for placeholder, original in self.entity_map.items():
-            if original == name and placeholder.startswith('[PERSON_'):
+            if original == name and not placeholder.startswith('['):
                 return placeholder
 
-        # Create new placeholder
-        self.person_counter += 1
-        placeholder = f"[PERSON_{self.person_counter}]"
-        self.entity_map[placeholder] = name
-        return placeholder
+        # Create initials-based placeholder
+        # "Alexander Field Fredrickson" -> "AFF"
+        # "Gregory L. Zempel" -> "GLZ"
+        # "John Smith" -> "JS"
+        parts = name.split()
+        initials = ''.join([p[0].upper() for p in parts if p and len(p) > 0 and p[0].isupper() and p not in ['.', ',']])
+
+        # If we already have this initials, add number
+        base_initials = initials
+        counter = 1
+        while initials in self.entity_map.values():
+            initials = f"{base_initials}{counter}"
+            counter += 1
+
+        self.entity_map[initials] = name
+        return initials
 
     def _get_location_placeholder(self, location: str) -> str:
         """Get or create placeholder for a location."""
@@ -322,6 +386,55 @@ def save_sanitization_map(file_path: Path, mapping: dict) -> str:
         }, f, indent=2)
 
     return uuid
+
+
+def save_analysis_to_obsidian(analysis_text: str, sanitized_text: str, mapping: dict) -> Path:
+    """
+    Save sanitized analysis to Obsidian vault.
+
+    Filename format: YYYY-MM-DD [ClientInitials].md
+    Example: 2026-01-28 AFF.md
+
+    Returns path to saved file.
+    """
+    obsidian_dir = Path.home() / 'Library/CloudStorage/Dropbox/Obsidian/Tony\'s Vault/MCP Legal'
+    obsidian_dir.mkdir(parents=True, exist_ok=True)
+
+    # Extract client initials (first person in mapping)
+    client_initials = None
+    for placeholder, original in mapping.items():
+        if not placeholder.startswith('['):  # It's initials, not [PERSON_1] format
+            client_initials = placeholder
+            break
+
+    if not client_initials:
+        client_initials = "UNK"  # Unknown
+
+    # Extract violation/stop date from sanitized text
+    # Look for "Vio. Date:", "Violation Date:", or dates in first 500 chars
+    date_match = re.search(r'(?:Vio\.?|Violation)\s+Date:?\s*(\d{1,2}/\d{1,2}/\d{2,4})', sanitized_text[:500])
+    if date_match:
+        date_str = date_match.group(1)
+        # Parse and reformat to YYYY-MM-DD
+        try:
+            from datetime import datetime as dt
+            parsed = dt.strptime(date_str, "%m/%d/%Y" if len(date_str) > 8 else "%m/%d/%y")
+            file_date = parsed.strftime("%Y-%m-%d")
+        except:
+            file_date = datetime.now().strftime("%Y-%m-%d")
+    else:
+        # Use today's date
+        file_date = datetime.now().strftime("%Y-%m-%d")
+
+    # Create filename
+    filename = f"{file_date} {client_initials}.md"
+    file_path = obsidian_dir / filename
+
+    # Write analysis (no coversheet - straight to content)
+    with open(file_path, 'w') as f:
+        f.write(analysis_text)
+
+    return file_path
 
 
 @app.list_tools()
