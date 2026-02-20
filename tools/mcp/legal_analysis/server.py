@@ -53,8 +53,10 @@ print("INFO: Using regex-based sanitization (Python 3.14+ compatible)", file=sys
 print("      This catches: names in captions, case numbers, SSN, DOB, phones, addresses, plates", file=sys.stderr)
 
 # Configuration
-# Temporary folder for dropping files to analyze (can delete after analysis)
-CASE_FILES_DIR = Path.home() / "Library/CloudStorage/Dropbox/MCP Analysis"
+# SECURITY: MCP server ONLY has access to sanitized/ folder
+# Original PDFs live in originals/ folder which MCP cannot access
+# Watcher service processes originals → sanitized .txt files
+CASE_FILES_DIR = Path.home() / "Library/CloudStorage/Dropbox/MCP Analysis/sanitized"
 SANITIZATION_MAPS_DIR = Path.home() / "atlas/data/legal_sanitization_maps"
 
 # Create directories if they don't exist
@@ -469,6 +471,19 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="detect_case_type",
+            description="Auto-detect case type by reading the document and identifying DUI indicators (breath/blood test, BAC, field sobriety, implied consent) vs. general criminal. Returns detected type with evidence for user confirmation before analysis.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Name of the case file to detect (optional - if not provided, detects ALL files in folder)",
+                    }
+                }
+            }
+        ),
+        Tool(
             name="analyze_dui_criminal",
             description="Comprehensive DUI criminal defense analysis under Washington law - checks reasonable suspicion, probable cause, 4th/5th Amendment issues, breath/blood test compliance, warrant issues, and suppression opportunities",
             inputSchema={
@@ -507,6 +522,28 @@ async def list_tools() -> list[Tool]:
                 }
             }
         ),
+        Tool(
+            name="save_analysis",
+            description="Save a completed legal analysis to Obsidian vault. Use this AFTER generating an analysis. Filename format: YYYY-MM-DD [ClientInitials].md",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "analysis_content": {
+                        "type": "string",
+                        "description": "The full analysis text to save (must use initials like AFF, not full names)"
+                    },
+                    "client_initials": {
+                        "type": "string",
+                        "description": "Client initials (e.g., 'AFF', 'JS')"
+                    },
+                    "case_date": {
+                        "type": "string",
+                        "description": "Case/violation date in YYYY-MM-DD format (optional - uses today if not provided)"
+                    }
+                },
+                "required": ["analysis_content", "client_initials"]
+            }
+        ),
     ]
 
 
@@ -515,57 +552,203 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     """Handle tool calls."""
 
     if name == "list_case_files":
-        pattern = arguments.get("pattern", "*.pdf")
-        files = sorted(CASE_FILES_DIR.glob(pattern))
+        pattern = arguments.get("pattern")
+
+        if pattern:
+            files = sorted(CASE_FILES_DIR.glob(pattern))
+        else:
+            # Only list .txt files (all originals are pre-sanitized to .txt by watcher)
+            files = sorted(CASE_FILES_DIR.glob("*.txt"), key=lambda f: f.name)
 
         if not files:
+            search_desc = f"matching '{pattern}'" if pattern else "(*.txt)"
             return [TextContent(
                 type="text",
-                text=f"No files found matching '{pattern}' in {CASE_FILES_DIR}"
+                text=f"No sanitized files found {search_desc} in {CASE_FILES_DIR.name}/\n\n"
+                     f"Drop PDF or transcript files in originals/ folder.\n"
+                     f"Watcher service will auto-sanitize them to .txt files here."
             )]
 
-        file_list = "\n".join([f"- {f.name} ({f.stat().st_size // 1024} KB)" for f in files])
+        file_list = []
+        for f in files:
+            file_list.append(f"- {f.name} ({f.stat().st_size // 1024} KB)")
+
         return [TextContent(
             type="text",
-            text=f"Found {len(files)} case files:\n\n{file_list}"
+            text=f"Found {len(files)} sanitized case files:\n\n" + "\n".join(file_list) +
+                 f"\n\n**Security:** These are pre-sanitized .txt files. Original PDFs are not accessible to this server."
         )]
 
     elif name == "read_case_sanitized":
         filename = arguments["filename"]
+
+        # Ensure it's a .txt file
+        if not filename.endswith(".txt"):
+            return [TextContent(
+                type="text",
+                text=f"ERROR: Only .txt files are accessible. "
+                     f"Original PDFs must be placed in originals/ folder for auto-sanitization."
+            )]
+
         file_path = CASE_FILES_DIR / filename
 
         if not file_path.exists():
             return [TextContent(
                 type="text",
-                text=f"ERROR: File not found: {filename}"
+                text=f"ERROR: File not found: {filename}\n\n"
+                     f"Available files: Use list_case_files to see sanitized .txt files."
             )]
 
-        # Extract text from PDF
+        # Read pre-sanitized text file
         try:
-            text = extract_pdf_text(file_path)
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                text = f.read()
         except Exception as e:
             return [TextContent(
                 type="text",
-                text=f"ERROR: Failed to read PDF: {e}"
+                text=f"ERROR: Failed to read text file: {e}"
             )]
 
-        # Sanitize
+        # Second pass sanitization for safety (defense in depth)
         sanitizer = CaseSanitizer()
         sanitized_text, mapping = sanitizer.sanitize_text(text)
 
-        # Save mapping locally
-        uuid = save_sanitization_map(file_path, mapping)
+        # Save mapping locally if any additional redactions were made
+        if mapping:
+            uuid = save_sanitization_map(file_path, mapping)
+            redaction_note = f"(Server made {len(mapping)} additional redactions - UUID: {uuid})"
+        else:
+            redaction_note = "(Pre-sanitized by watcher service - no additional redactions needed)"
 
-        # Return sanitized text to ChatGPT
+        # Return sanitized text
         return [TextContent(
             type="text",
             text=f"**SANITIZED CASE FILE: {filename}**\n"
-                 f"(Original identities stored locally with UUID: {uuid})\n\n"
+                 f"{redaction_note}\n\n"
                  f"{sanitized_text}\n\n"
                  f"---\n"
-                 f"**Note:** All client names, case numbers, and PII have been redacted. "
-                 f"Analysis should reference placeholders (e.g., [PERSON_1], [LOCATION_2])."
+                 f"**Security:** This file was pre-sanitized to .txt by watcher service. "
+                 f"Original PDF is not accessible to this server. "
+                 f"All client names, case numbers, and PII have been redacted. "
+                 f"Analysis should reference initials (e.g., AFF, JS)."
         )]
+
+    elif name == "detect_case_type":
+        filename = arguments.get("filename")
+
+        # Read and sanitize file(s)
+        if filename:
+            file_path = CASE_FILES_DIR / filename
+            if not file_path.exists():
+                return [TextContent(type="text", text=f"ERROR: File not found: {filename}")]
+
+            try:
+                text = extract_pdf_text(file_path)
+                sanitizer = CaseSanitizer()
+                sanitized_text, mapping = sanitizer.sanitize_text(text)
+                files_analyzed = [filename]
+            except Exception as e:
+                return [TextContent(type="text", text=f"ERROR: Failed to read PDF: {e}")]
+        else:
+            # Batch mode - analyze all files
+            files = sorted(CASE_FILES_DIR.glob("*.pdf"))
+            if not files:
+                return [TextContent(type="text", text="No PDF files found in drop folder")]
+
+            sanitized_text = ""
+            files_analyzed = []
+            for file_path in files:
+                try:
+                    text = extract_pdf_text(file_path)
+                    sanitizer = CaseSanitizer()
+                    s_text, mapping = sanitizer.sanitize_text(text)
+                    sanitized_text += f"\n{s_text}\n"
+                    files_analyzed.append(file_path.name)
+                except Exception as e:
+                    sanitized_text += f"\nERROR reading {file_path.name}: {e}\n"
+
+        # Auto-detect case type based on content
+        text_lower = sanitized_text.lower()
+
+        # DUI indicators
+        dui_indicators = {
+            "breath_test": any(phrase in text_lower for phrase in ["breath test", "datamaster", "bac", "breath sample", "alco-sensor"]),
+            "blood_test": any(phrase in text_lower for phrase in ["blood test", "blood draw", "blood sample", "toxicology"]),
+            "field_sobriety": any(phrase in text_lower for phrase in ["field sobriety", "sfst", "horizontal gaze", "walk and turn", "one leg stand", "hgn"]),
+            "dui_charge": any(phrase in text_lower for phrase in ["dui", "dwi", "driving under the influence", "actual physical control", "reckless driving"]),
+            "implied_consent": any(phrase in text_lower for phrase in ["implied consent", "rcw 46.20.308", "license suspension", "dol hearing"]),
+            "bac_reading": bool(re.search(r'\b0\.\d{2,3}\b', text_lower)),  # Matches BAC like 0.08, 0.125
+        }
+
+        dui_count = sum(dui_indicators.values())
+
+        # DOL hearing specific indicators
+        dol_indicators = {
+            "dol_hearing": "dol hearing" in text_lower or "department of licensing" in text_lower,
+            "license_suspension": "license suspension" in text_lower or "license revocation" in text_lower,
+            "implied_consent_warning": "implied consent" in text_lower and ("warning" in text_lower or "advisement" in text_lower),
+            "refusal": "refused" in text_lower and ("breath" in text_lower or "test" in text_lower),
+        }
+
+        dol_count = sum(dol_indicators.values())
+
+        # Determine case type
+        if dui_count >= 2 and dol_count >= 2:
+            detected_type = "DUI with DOL hearing issues"
+            recommendation = "analyze_dui_criminal AND analyze_dui_dol_hearing"
+        elif dui_count >= 2:
+            detected_type = "DUI criminal case"
+            recommendation = "analyze_dui_criminal"
+        elif dol_count >= 2:
+            detected_type = "DUI DOL hearing"
+            recommendation = "analyze_dui_dol_hearing"
+        else:
+            detected_type = "General criminal case (non-DUI)"
+            recommendation = "analyze_criminal_case"
+
+        # Build evidence list
+        evidence = []
+        if dui_indicators["breath_test"]:
+            evidence.append("✓ Breath test mentioned")
+        if dui_indicators["blood_test"]:
+            evidence.append("✓ Blood test mentioned")
+        if dui_indicators["field_sobriety"]:
+            evidence.append("✓ Field sobriety tests documented")
+        if dui_indicators["dui_charge"]:
+            evidence.append("✓ DUI/DWI charge present")
+        if dui_indicators["bac_reading"]:
+            evidence.append("✓ BAC reading found")
+        if dui_indicators["implied_consent"]:
+            evidence.append("✓ Implied consent language")
+        if dol_indicators["dol_hearing"]:
+            evidence.append("✓ DOL hearing referenced")
+        if dol_indicators["license_suspension"]:
+            evidence.append("✓ License suspension issue")
+        if dol_indicators["refusal"]:
+            evidence.append("✓ Test refusal documented")
+
+        if not evidence:
+            evidence.append("⚠ No DUI-specific indicators found")
+
+        # Format response
+        files_list = "\n".join([f"  - {f}" for f in files_analyzed])
+        evidence_list = "\n".join([f"  {e}" for e in evidence])
+
+        response = (
+            f"**CASE TYPE DETECTION**\n\n"
+            f"**Files Analyzed:**\n{files_list}\n\n"
+            f"**Detected Type:** {detected_type}\n\n"
+            f"**Evidence:**\n{evidence_list}\n\n"
+            f"**Recommended Analysis:** {recommendation}\n\n"
+            f"---\n\n"
+            f"**Please confirm:** Is this detection correct, or should I analyze as:\n"
+            f"  • DUI criminal case\n"
+            f"  • DUI DOL hearing\n"
+            f"  • General criminal case\n"
+            f"  • Both DUI criminal AND DOL hearing"
+        )
+
+        return [TextContent(type="text", text=response)]
 
     elif name == "analyze_dui_criminal":
         filename = arguments.get("filename")
@@ -897,6 +1080,48 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         )
 
         return [TextContent(type="text", text=prompt)]
+
+    elif name == "save_analysis":
+        analysis_content = arguments["analysis_content"]
+        client_initials = arguments["client_initials"]
+        case_date = arguments.get("case_date")
+
+        # Validate that analysis uses initials, not full names
+        # Quick check for common name patterns that shouldn't be there
+        suspicious_patterns = [
+            r'Defendant:\s+[A-Z][a-z]+ [A-Z][a-z]+',  # "Defendant: John Smith"
+            r'Officer:\s+[A-Z][a-z]+ [A-Z][a-z]+',    # "Officer: Jane Doe"
+        ]
+
+        for pattern in suspicious_patterns:
+            if re.search(pattern, analysis_content):
+                return [TextContent(
+                    type="text",
+                    text="⚠️  ERROR: Analysis contains full names instead of initials. "
+                         "Please regenerate the analysis using only initials (e.g., AFF, JS) for all people."
+                )]
+
+        # Determine filename date
+        if case_date:
+            file_date = case_date
+        else:
+            file_date = datetime.now().strftime("%Y-%m-%d")
+
+        # Save to Obsidian
+        obsidian_dir = Path.home() / 'Library/CloudStorage/Dropbox/Obsidian/Tony\'s Vault/MCP Legal'
+        obsidian_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"{file_date} {client_initials}.md"
+        file_path = obsidian_dir / filename
+
+        with open(file_path, 'w') as f:
+            f.write(analysis_content)
+
+        return [TextContent(
+            type="text",
+            text=f"✓ Analysis saved to Obsidian:\n{file_path}\n\n"
+                 f"Filename: {filename}"
+        )]
 
     else:
         return [TextContent(

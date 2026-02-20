@@ -36,6 +36,7 @@ memory/bambu-last-reply.txt
 data/*.db
 data/*.json
 data/*.migrated
+data/pdf_watcher_state.txt
 !data/.gitkeep
 
 # Legal sanitization maps (contain PII → placeholder mappings)
