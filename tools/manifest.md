@@ -129,6 +129,12 @@ Master list of tools and their functions. Before writing new code, check this li
 |------|-------------|
 | `tools/zapier/zapier_runner.py` | Standalone MCP client for Zapier. Called by tool_runner via subprocess. Allowlisted tools: gmail_create_draft, google_calendar_find/create/move/busy. URL from `.env` MCP key. |
 
+## Legal Analysis MCP Server (`tools/mcp/legal_analysis/`)
+
+| Tool | Description |
+|------|-------------|
+| `tools/mcp/legal_analysis/server.py` | MCP server for ChatGPT Desktop integration - reads case files from `~/Library/CloudStorage/Dropbox/MCP Analysis`, sanitizes PII locally, provides sanitized text to ChatGPT for legal analysis. Never sends client names/case numbers to API. See `docs/LEGAL_ANALYSIS_MCP.md`. |
+
 ## Quick Capture (`tools/capture/`)
 
 | Tool | Description |

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "legal-analysis": {
+      "command": "python3",
+      "args": ["/Users/printer/atlas/tools/mcp/legal_analysis/server.py"],
+      "env": {}
+    }
+  }
+}
